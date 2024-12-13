@@ -71,7 +71,10 @@ create_track <- function(row) {
         extra_args
       )),
       "GenomeAxisTrack" = do.call(GenomeAxisTrack, extra_args),
-      "IdeogramTrack" = do.call(IdeogramTrack, c(list(genome = genome, chromosome = chromosome), extra_args)),
+      "IdeogramTrack" = do.call(IdeogramTrack, c(
+        list(genome = genome, chromosome = chromosome),
+        extra_args
+      )),
       "BiomartGeneRegionTrack" = do.call(BiomartGeneRegionTrack, c(
         list(genome = genome, chromosome = chromosome, start = row$start, end = row$end, name = track_name, biomart = useMart("ensembl")),
         extra_args
