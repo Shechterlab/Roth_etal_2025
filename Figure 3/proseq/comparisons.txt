@@ -1,0 +1,6 @@
+sample,name
+C:/Users/david/OneDrive/Bioinformatics/PRMTi/proseq/peppro/DESeq2/GSK591.15min_vs_CONTROL_proSeq-genes_DESeq2.csv,15m-GSK591
+C:/Users/david/OneDrive/Bioinformatics/PRMTi/proseq/peppro/DESeq2/GSK591.3hr_vs_CONTROL_proSeq-genes_DESeq2.csv,3hr-GSK591
+C:/Users/david/OneDrive/Bioinformatics/PRMTi/proseq/peppro/DESeq2/condition_GSK591_2days_vs_Untreated_DESEQ2.csv,2d-GSK591
+C:/Users/david/OneDrive/Bioinformatics/PRMTi/proseq/peppro/DESeq2/condition_GSK591_4days_vs_Untreated_DESEQ2.csv,4d-GSK591
+C:/Users/david/OneDrive/Bioinformatics/PRMTi/proseq/peppro/DESeq2/condition_GSK591_1week_vs_Untreated_DESEQ2.csv,7d-GSK591
