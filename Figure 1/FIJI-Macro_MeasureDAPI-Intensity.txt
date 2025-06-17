@@ -1,0 +1,60 @@
+
+baseDir = "/Users/jacobroth/Library/CloudStorage/OneDrive-Personal/RothJacob_PhDFiles/1-Projects/2-Experiments/JSRe0262-T_IF_NB06-060_TestNutlin-PRMT5i-OnH4-AndNPAT-Puncta/4-data_processed/";
+batchFolder = "20250530_Batch03/";
+
+
+
+slideReps = newArray(
+"JSRs121-01");
+
+
+// Channel names
+CH1 = "Untitled_CH1";
+CH2 = "Untitled_CH2";
+CH3 = "Untitled_CH3";
+CH4 = "Untitled_CH4";
+
+// --- Loop through each sliderep ---
+for (s = 0; s < slideReps.length; s++) {
+    sliderep = slideReps[s];
+    run("Fresh Start");
+
+    BatchSlide = batchFolder + sliderep + "/";
+    dataDir = baseDir + BatchSlide + "Quantified-DAPI/";
+    File.makeDirectory(dataDir);
+
+    // Open the DAPI image
+    open(baseDir + BatchSlide + CH1 + ".tif");
+    rename("DAPI");
+
+    // Duplicate for segmentation
+    selectWindow("DAPI");
+    run("Set Scale...", "distance=7.549 known=1 unit=um");
+    run("Duplicate...", "title=DAPI_Mask");
+
+    // Process to binary mask
+    selectWindow("DAPI_Mask");
+    run("16-bit");
+    run("Auto Threshold", "method=otsu dark");
+    run("Convert to Mask");
+    run("Fill Holes");
+    run("Watershed");
+
+    // Analyze and collect ROIs
+    run("Set Measurements...", "area mean min max centroid perimeter bounding fit shape integrated display redirect=DAPI decimal=3");
+    run("Analyze Particles...", "size=5-1000 exclude on-edges show=Outlines display clear include add");
+
+    // Save ROI set
+    roiManager("Save", dataDir + "rois_nuclei.zip");
+
+    // Save overlay image
+    selectWindow("DAPI_Mask");
+    roiManager("Show All");
+    run("Flatten");
+    saveAs("Tiff", dataDir + "Overlay_DAPI.tif");
+
+    // Save results
+    saveAs("Results", dataDir + "Quantification_Nuclei.csv");
+    close("Results");
+    run("Fresh Start"); // Removes all images and saved data
+}
