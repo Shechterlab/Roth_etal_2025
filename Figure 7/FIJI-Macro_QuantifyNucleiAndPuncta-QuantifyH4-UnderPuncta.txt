@@ -1,0 +1,106 @@
+// 20250611: Looping version for NPAT and H4 puncta analysis
+dir = "/Users/jacobroth/Library/CloudStorage/OneDrive-Personal/RothJacob_PhDFiles/1-Projects/2-Experiments/JSRe0278-T_Cellular_NB06-000_OverExpressionOfMutantH4-Lentiviral/4-data_processed/";
+// rep = "-02";
+folder = "NPAT-Measure/";
+
+// Define list of slides to process
+slides = newArray("JSRs190-01",
+"JSRs190-02"
+); // ← Add more as needed
+
+for (i = 0; i < slides.length; i++) {
+  slide = slides[i];
+  BatchSlide = "20250609_Batch02/" + slide + "/";
+  saveDir = dir + BatchSlide + folder;
+  File.makeDirectory(saveDir);
+
+  CH1 = "Untitled_CH1";
+  CH2 = "Untitled_CH2";
+  CH3 = "Untitled_CH3";
+  CH4 = "Untitled_CH4";
+
+  run("Fresh Start");
+
+  // --- DAPI (CH1) nuclei segmentation ---
+  open(dir + BatchSlide + CH1 + ".tif");
+  rename("DAPI");
+  run("16-bit");
+  run("Set Scale...", "distance=4.36 known=1 unit=um");
+  saveAs("Tiff", saveDir + "CH1_image.tif");
+
+  run("Duplicate...", "title=DAPI_Mask");
+  selectWindow("DAPI_Mask");
+  run("Auto Threshold", "method=Otsu dark");
+  run("Convert to Mask");
+  run("Fill Holes");
+  run("Watershed");
+
+  run("Set Scale...", "distance=4.36 known=1 unit=um");
+  run("Set Measurements...", "area mean min max centroid perimeter bounding fit shape integrated display redirect=DAPI_Mask decimal=3");
+  run("Analyze Particles...", "size=5-1000 exclude on-edges show=Outlines display clear include add");
+
+  roiManager("Show All");
+  roiManager("Draw");
+  saveAs("Tiff", saveDir + "Overlay_DAPI.tif");
+  roiManager("Save", dir + BatchSlide + "rois_nuclei.zip");
+  saveAs("Results", saveDir + "Quantification_Nuclei.csv");
+
+  run("Fresh Start");
+
+  // --- NPAT (CH4) puncta segmentation ---
+  open(dir + BatchSlide + CH4 + ".tif");
+  rename("NPAT");
+  run("Set Scale...", "distance=4.36 known=1 unit=um");
+  run("Duplicate...", "title=NPAT_Mask");
+  selectWindow("NPAT_Mask");
+  run("RGB Color");
+  run("16-bit");
+  setAutoThreshold("MaxEntropy dark no-reset");
+  run("Convert to Mask");
+
+  run("Set Measurements...", "area mean min centroid perimeter bounding fit shape integrated display redirect=NPAT decimal=5");
+  run("Analyze Particles...", "size=0.0010-5 circularity=0.3-1.00 show=Outlines display clear include add");
+
+  roiManager("Show All");
+  roiManager("Draw");
+  saveAs("Tiff", saveDir + "Overlay_NPAT.tif");
+  roiManager("Save", saveDir + "rois_puncta-NPAT.zip");
+  saveAs("Results", saveDir + "Quantification_puncta-NPAT.csv");
+
+  run("Fresh Start");
+
+  // --- Quantify H4 signal in NPAT puncta ---
+  open(dir + BatchSlide + CH2 + ".tif");
+  rename("H4_RGB");
+  run("RGB Color");
+  run("16-bit");
+  rename("H4");
+
+  roiManager("Reset");
+  roiManager("Open", saveDir + "rois_puncta-NPAT.zip");
+  run("Set Scale...", "distance=4.36 known=1 unit=um");
+  run("Set Measurements...", "area mean min max integrated display redirect=H4 decimal=5");
+  roiManager("Select All");
+  roiManager("Measure");
+  saveAs("Results", saveDir + "Quantification_puncta-H4inNPAT.csv");
+
+  run("Fresh Start");
+
+  // --- Overlay NPAT puncta onto DAPI ---
+  open(saveDir + "Overlay_DAPI.tif");
+  open(saveDir + "Overlay_NPAT.tif");
+  selectWindow("Overlay_DAPI.tif");
+  run("Add Image...", "image=Overlay_NPAT.tif x=0 y=0 opacity=50");
+  run("Flatten");
+  saveAs("Tiff", saveDir + "Overlay_DAPI-NPAT.tif");
+
+  run("Fresh Start");
+
+  // --- Load all channels for visual reference (optional stack) ---
+  open(saveDir + "Overlay_DAPI-NPAT.tif");
+  open(dir + BatchSlide + CH1 + ".tif"); rename("DAPI_RGB"); run("RGB Color"); run("16-bit"); rename("DAPI_16bit");
+  open(dir + BatchSlide + CH4 + ".tif"); rename("NPAT"); run("RGB Color"); run("16-bit");
+  open(dir + BatchSlide + CH2 + ".tif"); rename("H4"); run("RGB Color"); run("16-bit");
+  open(dir + BatchSlide + CH3 + ".tif"); rename("Actin"); run("RGB Color"); run("16-bit");
+  run("Images to Stack", "use");
+}
