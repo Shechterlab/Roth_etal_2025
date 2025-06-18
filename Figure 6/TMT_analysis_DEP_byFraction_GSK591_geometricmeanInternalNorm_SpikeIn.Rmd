@@ -1,0 +1,621 @@
+---
+title:  "Analysis of Fractionation timecourse following GSK591 with TMT labeling; normalized using geometric mean to internal spike-in with no imputation"
+author: "David Shechter (based on original script by Maxim Maron) & Jacob Roth"
+date:   "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r "setup", include=FALSE}
+#Set the WD here
+knitr::opts_knit$set(root.dir = normalizePath('C:/Users/david/OneDrive/Bioinformatics/PRMTi/2023 PRMTi Fractionation Mass Spec TMT Labeling/'))
+##load libraries
+library(DEP)
+library(SummarizedExperiment) # loads assay(), rowData(), etc. that are not in DEP
+library(dplyr)
+library(tidyverse)
+library(rio)
+library(ggplot2)
+library(ggrepel)
+#library(viridisLite)
+#library(EnhancedVolcano)
+
+
+# Read your gene list from CSV (one column, no header—or adjust header=TRUE if you have one)
+genes_to_label <- read.csv("C:/Users/david/OneDrive/Bioinformatics/PRMTi/2023 PRMTi Fractionation Mass Spec TMT Labeling/genes_to_label.txt", 
+  header = FALSE, 
+  stringsAsFactors = FALSE
+)[[1]]
+
+
+```
+
+---
+#Read and Normalize Data#
+
+```{r read data}
+
+#Read in data
+data <- readxl::read_xlsx('TMT_Master.xlsx' ,sheet = 2)
+#Set NA to 0
+data[,grep('_', colnames(data))][is.na(data[,grep('_', colnames(data))])] <- 0 
+
+#The line below removes MS023 data from the experiment
+data <- data[,-grep('127C|128C|129C|130C',colnames(data))]
+
+#Load in experimental design
+experimental_design <- read.csv('experimental_design.csv', header =T)
+#Remove MS023 from experimental design
+experimental_design <- experimental_design[-grep('MS023',experimental_design$condition),]
+
+#Filter out each fraction to be analyzed independently
+experimental_design_hypo <- experimental_design[grep('HYPO',experimental_design$label),]
+experimental_design_nuc <- experimental_design[grep('NUC',experimental_design$label),]
+experimental_design_chr <- experimental_design[grep('CHR',experimental_design$label),]
+
+
+# Are there any duplicated gene names?
+data$Gene.Symbol  %>% duplicated() %>% any()
+# Make a table of duplicated gene names
+data %>% group_by(Gene.Symbol) %>% summarize(frequency = n()) %>% 
+  arrange(desc(frequency)) %>% filter(frequency > 1)
+# Make unique names using the annotation in the "Gene.Symbol" column as primary names and the annotation in "Accession" as name for those that do not have an gene name.
+data <- make_unique(data, "Gene.Symbol", "Accession", delim = ";")
+# Are there any duplicated names?
+data$name %>% duplicated() %>% any()
+
+
+##GET HYPO DATA
+data_hypo <- subset(data, select = c(grep('HYPO',colnames(data))))
+#Restructure the dataframe
+data_hypo <- cbind(data[c((ncol(data)-1):ncol(data))], data_hypo)
+#Remove any rows where the sum of all columns is 0
+data_hypo <- data_hypo[!apply(data_hypo == 0, 1, any), ]
+
+# get the geometric average intensity for the spike-in
+irs_hypo_std <- subset(data_hypo, select = c(grep('_131', colnames(data_hypo))))
+irs_hypo_std$average <- apply(irs_hypo_std, 1, function(x) exp(mean(log(x))))
+
+# subset dataframes into their individual experiments
+data_hypo <- subset(data_hypo, select = -c(grep('_131', colnames(data_hypo))))
+data_hypo_1 <- data_hypo[,grep("RepA", colnames(data_hypo))]
+data_hypo_2 <- data_hypo[,grep("RepB", colnames(data_hypo))]
+data_hypo_3 <- data_hypo[,grep("RepC", colnames(data_hypo))]
+
+# make new data frame with row sums from each frame
+irs_hypo <- tibble(rowSums(data_hypo_1), rowSums(data_hypo_2), rowSums(data_hypo_3))
+colnames(irs_hypo) <- c("sum1", "sum2", "sum3")
+
+irs_hypo$average <- irs_hypo_std$average
+
+
+# compute the scaling factor vectors
+irs_hypo$fac1 <- irs_hypo$average / irs_hypo$sum1
+irs_hypo$fac2 <- irs_hypo$average / irs_hypo$sum2
+irs_hypo$fac3 <- irs_hypo$average / irs_hypo$sum3
+
+# make new data frame with IRS normalized data
+data_hypo_irs <- data_hypo_1 * irs_hypo$fac1
+data_hypo_irs <- cbind(data_hypo_irs, data_hypo_2 * irs_hypo$fac2)
+data_hypo_irs <- cbind(data_hypo_irs, data_hypo_3 * irs_hypo$fac3)
+data_hypo_irs <- cbind(data_hypo[,c(1:2)], data_hypo_irs)
+
+
+##GET NUC DATA
+data_nuc <- subset(data, select = c(grep('NUC',colnames(data))))
+# Restruture the dataframe
+data_nuc <- cbind(data[c((ncol(data)-1):ncol(data))], data_nuc)
+# Remove any rows where the sum of all columns is 0
+data_nuc <- data_nuc[!apply(data_nuc == 0, 1, any), ]
+
+# get the geometric average intensity for the spike-in
+irs_nuc_std <- subset(data_nuc, select = c(grep('_131', colnames(data_nuc))))
+irs_nuc_std$average <- apply(irs_nuc_std, 1, function(x) exp(mean(log(x))))
+
+# subset dataframes into their individual experiments
+data_nuc <- subset(data_nuc, select = -c(grep('_131', colnames(data_nuc))))
+data_nuc_1 <- data_nuc[,grep("RepA", colnames(data_nuc))]
+data_nuc_2 <- data_nuc[,grep("RepB", colnames(data_nuc))]
+data_nuc_3 <- data_nuc[,grep("RepC", colnames(data_nuc))]
+
+# make new data frame with row sums from each frame
+irs_nuc <- tibble(rowSums(data_nuc_1), rowSums(data_nuc_2), rowSums(data_nuc_3))
+colnames(irs_nuc) <- c("sum1", "sum2", "sum3")
+
+irs_nuc$average <- irs_nuc_std$average
+
+
+# compute the scaling factor vectors
+irs_nuc$fac1 <- irs_nuc$average / irs_nuc$sum1
+irs_nuc$fac2 <- irs_nuc$average / irs_nuc$sum2
+irs_nuc$fac3 <- irs_nuc$average / irs_nuc$sum3
+
+# make new data frame with IRS normalized data
+data_nuc_irs <- data_nuc_1 * irs_nuc$fac1
+data_nuc_irs <- cbind(data_nuc_irs, data_nuc_2 * irs_nuc$fac2)
+data_nuc_irs <- cbind(data_nuc_irs, data_nuc_3 * irs_nuc$fac3)
+data_nuc_irs <- cbind(data_nuc[,c(1:2)], data_nuc_irs)
+
+
+##GET CHR DATA
+data_chr <- subset(data, select = c(grep('CHR',colnames(data))))
+# Restructure the dataframe
+data_chr <- cbind(data[c((ncol(data)-1):ncol(data))], data_chr)
+# Remove any rows where the sum across all columns is 0
+data_chr <- data_chr[!apply(data_chr == 0, 1, any), ]
+
+# get the geometric average intensity for the spike-in
+irs_chr_std <- subset(data_chr, select = c(grep('_131', colnames(data_chr))))
+irs_chr_std$average <- apply(irs_chr_std, 1, function(x) exp(mean(log(x))))
+
+# subset dataframes into their individual experiments
+data_chr <- subset(data_chr, select = -c(grep('_131', colnames(data_chr))))
+data_chr_1 <- data_chr[,grep("RepA", colnames(data_chr))]
+data_chr_2 <- data_chr[,grep("RepB", colnames(data_chr))]
+data_chr_3 <- data_chr[,grep("RepC", colnames(data_chr))]
+
+# make new data frame with row sums from each frame
+irs_chr <- tibble(rowSums(data_chr_1), rowSums(data_chr_2), rowSums(data_chr_3))
+colnames(irs_chr) <- c("sum1", "sum2", "sum3")
+
+irs_chr$average <- irs_chr_std$average
+
+
+# compute the scaling factor vectors
+irs_chr$fac1 <- irs_chr$average / irs_chr$sum1
+irs_chr$fac2 <- irs_chr$average / irs_chr$sum2
+irs_chr$fac3 <- irs_chr$average / irs_chr$sum3
+
+# make new data frame with IRS normalized data
+data_chr_irs <- data_chr_1 * irs_chr$fac1
+data_chr_irs <- cbind(data_chr_irs, data_chr_2 * irs_chr$fac2)
+data_chr_irs <- cbind(data_chr_irs, data_chr_3 * irs_chr$fac3)
+data_chr_irs <- cbind(data_chr[,c(1:2)], data_chr_irs)
+
+# Generate a SummarizedExperiment object using an experimental design (LFQ=Abundance)
+data_se_hypo <- make_se(data_hypo_irs, grep("Rep", colnames(data_hypo)), experimental_design_hypo)
+data_se_nuc <- make_se(data_nuc_irs, grep("Rep", colnames(data_nuc)), experimental_design_nuc)
+data_se_chr <- make_se(data_chr_irs, grep("Rep", colnames(data_chr)), experimental_design_chr)
+
+# Generate a SummarizedExperiment object by parsing condition information from the column names
+#data_se_parsed <- make_se_parse(data_unique, LFQ_columns)
+```
+
+---
+#Normalize and Plot Data#
+
+
+```{r normalize, include=TRUE}
+# Normalize the data
+data_norm_hypo <- normalize_vsn(data_se_hypo)
+data_norm_nuc <- normalize_vsn(data_se_nuc)
+data_norm_chr <- normalize_vsn(data_se_chr)
+
+# Visualize normalization by boxplots for all samples before and after normalization
+plot_normalization(data_se_hypo, data_norm_hypo)
+plot_normalization(data_se_nuc, data_norm_nuc)
+plot_normalization(data_se_chr, data_norm_chr)
+
+```
+
+---
+#Differential Enrichment Analysis#
+
+```{r differential,  include=TRUE}
+# Differential enrichment analysis  based on linear models and empherical Bayes statistics
+# Test every sample versus control
+#data_diff <- test_diff(data_imp, type = "control", control = "Control_SDMA")
+
+# Test all possible comparisons of samples
+#data_diff <- test_diff(data_imp, type = "all")
+
+# Test manually defined comparisons
+data_diff_hypo <- test_diff(data_norm_hypo, type = "manual", test =c("GSK_15_HYPO_vs_DMSO_HYPO", "GSK_90_HYPO_vs_DMSO_HYPO", "GSK_180_HYPO_vs_DMSO_HYPO", "GSK_48H_HYPO_vs_DMSO_HYPO"))
+
+data_diff_nuc <- test_diff(data_norm_nuc, type = "manual", test =c("GSK_15_NUC_vs_DMSO_NUC", "GSK_90_NUC_vs_DMSO_NUC", "GSK_180_NUC_vs_DMSO_NUC", "GSK_48H_NUC_vs_DMSO_NUC"))
+
+
+data_diff_chr <- test_diff(data_norm_chr, type = "manual", test =c("GSK_15_CHR_vs_DMSO_CHR", "GSK_90_CHR_vs_DMSO_CHR", "GSK_180_CHR_vs_DMSO_CHR", "GSK_48H_CHR_vs_DMSO_CHR"))
+
+# Denote significant proteins based on user defined cutoffs
+dep_hypo <- add_rejections(data_diff_hypo, alpha = 0.2, lfc = 0)
+dep_nuc <- add_rejections(data_diff_nuc, alpha = 0.2, lfc = 0)
+dep_chr <- add_rejections(data_diff_chr, alpha = 0.2, lfc = 0)
+
+# Plot the first and second principal components
+plot_pca(dep_hypo, x = 1, y = 2, n = 200, point_size = 4)
+plot_pca(dep_nuc, x = 1, y = 2, n = 200, point_size = 4)
+plot_pca(dep_chr, x = 1, y = 2, n = 200, point_size = 4)
+
+#Plot the Pearson correlation matrix
+# plot_cor(dep_hypo, significant = TRUE, lower = 0, upper = 1, pal = "PRGn", )
+# plot_cor(dep_nuc, significant = TRUE, lower = 0, upper = 1, pal = "PRGn")
+# plot_cor(dep_chr, significant = TRUE, lower = 0, upper = 1, pal = "PRGn", )
+# 
+# # Plot a heatmap of all significant proteins with the data centered per protein
+# plot_heatmap(dep_hypo, type = "centered", kmeans = TRUE, 
+#              k = 1, col_limit = 4, show_row_names = FALSE,
+#              indicate = c("condition", "replicate"))
+# plot_heatmap(dep_nuc, type = "centered", kmeans = TRUE, 
+#              k = 1, col_limit = 4, show_row_names = FALSE,
+#              indicate = c("condition", "replicate"))
+# plot_heatmap(dep_chr, type = "centered", kmeans = TRUE, 
+#              k = 1, col_limit = 4, show_row_names = FALSE,
+#              indicate = c("condition", "replicate"))
+```
+
+---
+#Generate Results Tables#
+
+
+```{r, generate results}
+# Generate a results table
+data_results_hypo <- get_results(dep_hypo)
+data_results_nuc <- get_results(dep_nuc)
+data_results_chr <- get_results(dep_chr)
+
+# Number of significant proteins
+data_results_hypo %>% filter(significant) %>% nrow()
+data_results_nuc %>% filter(significant) %>% nrow()
+data_results_chr %>% filter(significant) %>% nrow()
+
+# Generate a wide data.frame
+df_wide_hypo <- get_df_wide(dep_hypo)
+df_long_hypo <- get_df_long(dep_hypo)
+
+df_wide_nuc <- get_df_wide(dep_nuc)
+df_long_nuc <- get_df_long(dep_nuc)
+
+df_wide_chr <- get_df_wide(dep_chr)
+df_long_chr <- get_df_long(dep_chr)
+
+
+#plot pvals
+p_val_hypo <- data_results_hypo[,c(grep('p.val', colnames(data_results_hypo)))]
+for (i in 1:ncol(p_val_hypo)){
+  hist(p_val_hypo[[i]], main = names(p_val_hypo[i]))
+}
+p_val_nuc <- data_results_nuc[,c(grep('p.val', colnames(data_results_nuc)))]
+for (i in 1:ncol(p_val_nuc)){
+  hist(p_val_nuc[[i]], main = names(p_val_nuc[i]))
+}
+p_val_chr <- data_results_chr[,c(grep('p.val', colnames(data_results_chr)))]
+for (i in 1:ncol(p_val_chr)){
+  hist(p_val_chr[[i]], , main = names(p_val_chr[i]))
+}
+
+write.csv(df_wide_hypo, 'GSK591_fractionation_timecourse_TMT_byfraction_hypo_internalstd.csv')
+write.csv(df_wide_nuc, 'GSK591_fractionation_timecourse_TMT_byfraction_nuc_internalstd.csv')
+write.csv(df_wide_chr, 'GSK591_fractionation_timecourse_TMT_byfraction_chr_internalstd.csv')
+
+df_wide_hypo
+df_wide_nuc
+df_wide_chr
+```
+
+
+```{r volcano_plots, fig.height=12, fig.width=8, warning=FALSE, message=FALSE}
+
+dfs <- list(
+  HYPO = df_wide_hypo,
+  NUC  = df_wide_nuc,
+  CHR  = df_wide_chr
+)
+
+for (frac in names(dfs)) {
+  df <- dfs[[frac]]
+  diff_cols <- grep("_diff$", colnames(df), value = TRUE)
+  
+  for (diff_col in diff_cols) {
+    ct       <- sub("_diff$", "", diff_col)
+    fc_col   <- diff_col
+    pval_col <- paste0(ct, "_p.val")
+    
+    # prepare data
+    vol_df <- df %>%
+      transmute(
+        name   = name,
+        log2FC = .data[[fc_col]],
+        pval   = .data[[pval_col]]
+      ) %>%
+      mutate(
+        negLogP = -log10(pval),
+        status  = case_when(
+          pval < 0.05 & log2FC >=  0.1 ~ "Up",
+          pval < 0.05 & log2FC <= -0.1 ~ "Down",
+          TRUE                          ~ "NS"
+        )
+      )
+    
+    # limits
+    max_x <- max(abs(vol_df$log2FC), na.rm=TRUE) * 1.05
+    max_y <- max(vol_df$negLogP,      na.rm=TRUE) * 1.05
+    
+    # plot
+   p <- ggplot(vol_df, aes(x = log2FC, y = negLogP, color = status)) +
+  # points
+  geom_point(size = 3, alpha = 0.6) +
+  scale_color_manual(values = c(
+    "NS"   = "grey80",
+    "Up"   = "#2166ac",
+    "Down" = "#b2182b"
+  )) +
+  # thresholds
+  geom_vline(xintercept = c(-0.1, 0.1), linetype = "dashed") +
+  geom_hline(yintercept = -log10(0.05),    linetype = "dashed") +
+  # labels with more spacing, thinner segments, fewer overlaps
+  geom_text_repel(
+    data          = filter(vol_df, name %in% genes_to_label),
+    aes(label = name),
+    size          = 5,
+    box.padding   = 1.5,
+    point.padding = 0.8,
+    segment.size  = 0.3,
+    segment.alpha = 0.5,
+    max.overlaps  = 15
+  ) +
+  coord_cartesian(xlim = c(-max_x, max_x), ylim = c(0, max_y)) +
+  labs(
+    title = paste(frac, ct, "Volcano"),
+    x     = expression(Log[2]~fold~change),
+    y     = expression(-Log[10]~italic(p))
+  ) +
+  theme_minimal(base_size = 18) +
+  theme(
+    panel.background  = element_blank(),
+    panel.border      = element_rect(color = "black", fill = NA, size = 0.5),
+    axis.line         = element_line(color = "black"),
+    # only very light major gridlines; remove minor
+    panel.grid.major  = element_line(color = "grey90", size = 0.3),
+    panel.grid.minor  = element_blank(),
+    legend.position   = "none",
+    axis.text         = element_text(size = 14, color = "black"),
+    axis.title        = element_text(size = 16, color = "black"),
+    plot.title        = element_text(size = 20, hjust = 0.5)
+  )
+    
+    print(p)
+    
+    # save square PDF
+    ggsave(
+      filename = file.path("C:/Users/david/OneDrive/Bioinformatics/PRMTi/2023 PRMTi Fractionation Mass Spec TMT Labeling/Output",
+                           paste0("volcano_", frac, "_", ct, ".pdf")),
+      plot   = p,
+      device = "pdf",
+      width  = 6, height = 6
+    )
+  }
+}
+
+```
+
+---
+#Scatter Plots for genes_to_label
+
+```{r scatter_log2_time_sd, include = TRUE}
+library(SummarizedExperiment)  # for assay()
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(tibble)
+
+# Map condition → time in minutes
+time_map <- function(cond) {
+  case_when(
+    grepl("^DMSO", cond) ~ 0,
+    grepl("15",    cond) ~ 15,
+    grepl("90",    cond) ~ 90,
+    grepl("180",   cond) ~ 180,
+    grepl("48H",   cond) ~ 2880,
+    TRUE                ~ NA_real_
+  )
+}
+
+fractions <- list(
+  HYPO = data_norm_hypo,
+  NUC  = data_norm_nuc,
+  CHR  = data_norm_chr
+)
+
+# Precompute the x‐break positions for log2(time+1)
+times   <- c(0, 15, 90, 180, 2880)
+xbreaks <- log2(times + 1)
+xlabels <- c("0m", "15m", "90m", "180m", "48h")
+
+for (frac in names(fractions)) {
+  se  <- fractions[[frac]]
+  mat <- assay(se)
+  
+  # Subset to your genes_to_label
+  sel_genes <- intersect(rownames(mat), genes_to_label)
+  if (length(sel_genes) == 0) next
+  mat <- mat[sel_genes, , drop = FALSE]
+  
+  # Log2‐center each protein
+  log2_mat     <- log2(mat + 1)
+  centered_mat <- sweep(log2_mat, 1, rowMeans(log2_mat), FUN = "-")
+  
+  # Long format for replicates
+  data_long <- centered_mat %>%
+    as.data.frame() %>%
+    rownames_to_column("GeneSymbol") %>%
+    pivot_longer(
+      cols = -GeneSymbol,
+      names_to  = "sample",
+      values_to = "centered"
+    ) %>%
+    mutate(
+      cond     = sub("_[0-9]+$", "", sample),
+      time_min = time_map(cond),
+      x        = log2(time_min + 1)
+    ) %>%
+    filter(!is.na(time_min))
+  
+  # Summarize median + SD
+  summary_df <- data_long %>%
+    group_by(GeneSymbol, time_min) %>%
+    summarise(
+      med    = median(centered),
+      sd_val = sd(centered),
+      .groups = "drop"
+    ) %>%
+    mutate(x = log2(time_min + 1),
+           ymin = med - sd_val,
+           ymax = med + sd_val)
+  
+  # Plot
+  p <- ggplot() +
+    # replicates
+    geom_point(
+      data = data_long,
+      aes(x = x, y = centered),
+      color = "#2166ac", size = 2, alpha = 0.7
+    ) +
+    # SD error bars
+    geom_errorbar(
+      data    = summary_df,
+      aes(x = x, ymin = ymin, ymax = ymax),
+      width = 0.05, color = "darkgray", size = 0.8
+    ) +
+    # median line + points
+    geom_line(
+      data  = summary_df,
+      aes(x = x, y = med, group = GeneSymbol),
+      color = "darkgray", size = 1
+    ) +
+    geom_point(
+      data  = summary_df,
+      aes(x = x, y = med),
+      color = "darkgray", size = 3
+    ) +
+    # facets
+    facet_wrap(~ GeneSymbol, scales = "free_y", ncol = 4) +
+    # x-axis on log2 scale with 0m
+    scale_x_continuous(
+      breaks = xbreaks,
+      labels = xlabels
+    ) +
+    labs(
+      title = paste("Replicate Log2-Centered Intensities —", frac),
+      x     = "Time",
+      y     = "Log2-Centered Intensity"
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(
+      panel.border     = element_rect(color = "black", fill = NA),
+      panel.grid.minor = element_blank(),
+      axis.text.x      = element_text(angle = 0, hjust = 0.5),
+      legend.position  = "none"
+    )
+  
+  print(p)
+  ggsave(
+    filename = file.path("C:/Users/david/OneDrive/Bioinformatics/PRMTi/2023 PRMTi Fractionation Mass Spec TMT Labeling/output", paste0("scatter_", frac, ".pdf")),
+    plot     = p,
+    device   = "pdf",
+    width    = 10,
+    height   = 8
+  )
+}
+
+
+```
+
+
+
+```{r heatmap of specific genes, eval = FALSE}
+
+library(pheatmap)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(tibble)
+
+# Map condition → numeric time (minutes)
+time_map <- function(cond) {
+  case_when(
+    grepl("^DMSO", cond) ~ 0,
+    grepl("15",   cond) ~ 15,
+    grepl("90",   cond) ~ 90,
+    grepl("180",  cond) ~ 180,
+    grepl("48H",  cond) ~ 2880,
+    TRUE                ~ NA_real_
+  )
+}
+
+fractions <- list(
+  HYPO = data_norm_hypo,
+  NUC  = data_norm_nuc,
+  CHR  = data_norm_chr
+)
+
+for (frac in names(fractions)) {
+  se  <- fractions[[frac]]
+  mat <- assay(se)                             # raw VSN‐normalized intensities
+  
+  # 1. Log2‐transform and center each protein (row)
+  log2_mat     <- log2(mat + 1)
+  centered_mat <- sweep(log2_mat, 1, rowMeans(log2_mat), FUN = "-")
+  
+  # 2. Subset to only your genes_to_label
+  sel      <- intersect(rownames(centered_mat), genes_to_label)
+  if (length(sel) == 0) next
+  mat_sel  <- centered_mat[sel, , drop = FALSE]
+  
+  # 3. Average replicates by condition
+  conds     <- sub("_[0-9]+$", "", colnames(mat_sel))
+  avg_mat   <- sapply(unique(conds), function(c) rowMeans(mat_sel[, conds == c, drop = FALSE]))
+  col_order <- unique(conds)  # e.g. DMSO_HYPO, GSK_15_HYPO, …
+  avg_mat   <- avg_mat[, col_order, drop = FALSE]
+  
+  # --- Heatmap of the averaged, log2‐centered intensities ---
+  pheatmap(
+    avg_mat,
+    scale           = "none",     # already centered
+    cluster_rows    = FALSE,
+    cluster_cols    = FALSE,
+    show_rownames   = TRUE,
+    show_colnames   = TRUE,
+    color           = colorRampPalette(c("navy","white","firebrick"))(100),
+    main            = paste("Log2-Centered Avg —", frac, "fraction"),
+    fontsize_row    = 10,
+    fontsize_col    = 8,
+    border_color    = NA
+  )
+  
+  # --- Scatter of all replicates across time ---
+  data_long <- mat_sel %>%
+    as.data.frame() %>%
+    rownames_to_column("GeneSymbol") %>%
+    pivot_longer(-GeneSymbol, names_to = "sample", values_to = "centered") %>%
+    mutate(
+      cond = sub("_[0-9]+$", "", sample),
+      rep  = sub(".*_([0-9]+)$",   "\\1", sample),
+      time = time_map(cond)
+    ) %>%
+    filter(!is.na(time))
+  
+  timeplot <- ggplot(data_long, aes(x = time, y = centered, color = cond)) +
+    geom_point(size = 2) +
+    geom_line(aes(group = interaction(GeneSymbol, rep)), alpha = 0.4) +
+    facet_wrap(~ GeneSymbol, scales = "free_y", ncol = 4) +
+    scale_x_continuous(
+      breaks = c(0, 15, 90, 180, 2880),
+      labels = c("DMSO", "15m", "90m", "180m", "48h")
+    ) +
+    labs(
+      title = paste("Replicate Log2-Centered Intensities —", frac),
+      x     = "Time",
+      y     = "Log2-Centered Intensity"
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(
+      panel.grid.minor = element_blank(),
+      axis.text.x      = element_text(angle = 45, hjust = 1),
+      legend.position  = "none"
+    )
+  print(timeplot)
+}
+
+```
