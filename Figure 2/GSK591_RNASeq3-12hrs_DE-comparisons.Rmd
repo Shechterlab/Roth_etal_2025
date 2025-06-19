@@ -1,0 +1,1072 @@
+---
+title: "RNASeq Gene Expression Analysis and Comparison: GSK591 1-3-12 hr Timecourse in A549"
+output:
+  html_document:
+    toc: true
+  pdf_document:
+    toc: true
+    df_print: paged
+author: "David Shechter"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+params:
+  input_filename: "C:/Users/david/OneDrive/Bioinformatics/PRMTi/2024-06_PRMT5i_1-3-12hrs/comparisons.txt"
+  genes_to_highlight: NULL
+  tpm_data_file: "C:/Users/david/OneDrive/Bioinformatics/PRMTi/2024-06_PRMT5i_1-3-12hrs/salmon.merged.gene_counts_length_scaled.tsv"
+  genes_to_plot: NULL #"C:/Users/david/OneDrive/Bioinformatics/NPM1-TTLL4/shRNA-RNAseq/PU1_Q6_genes_to_show_on_heatmap.txt" #NULL #genes to plot TPM zscore
+  num_clusters: 2 #kmeans clusters for zscore plot 
+  num_genes_to_plot_zscore: 250
+  max_genes_to_highlight: 20
+  pvalue_threshold: 0.05  # Example use: --pvalue_threshold 0.01
+  qvalue_threshold: 0.05 # for ontology etc
+  log2FC_threshold: 0.58 
+  fill_na: zero #missing value handling for log2FC heatmap, "zero", "remove", or NULL
+  upreg_color: "#E76F00" #redish/orange
+  downreg_color: "#55439B" # blue/purple 
+  RRHO2_heatmap_colors: c("#A75C83", "#FFFFFF", "#135A56")
+  alpha: 0.5 #transparency
+  genome: "hg38"  # Example use: --genome "mm10"
+  species: "Homo sapiens"
+  output_dir: "C:/Users/david/OneDrive/Bioinformatics/PRMTi/2024-06_PRMT5i_1-3-12hrs/Output/"
+---
+
+### **Introduction: Gene Expression Analysis and Comparison**
+
+This script performs a comprehensive analysis of RNA-seq data with a focus on gene expression differences under various experimental conditions. It processes DESeq2, calculates QC metrics, and generates visualizations to aid in interpreting the biological impact of treatments or genetic modifications.
+
+The core analyses include:
+
+1. **Data Preparation:**
+   - Import and clean experimental RNA-seq datasets.
+   - Normalize data and calculate key statistical measures (e.g., p-values, fold changes).
+   - Merge multiple experimental conditions for pairwise and multi-condition analysis.
+
+2. **P-value Histograms:**
+   - Visualize the distribution of raw and adjusted p-values across datasets to assess the statistical significance of results.
+   
+3. **Volcano Plots:**
+   - Generate scatter plots of log2 fold changes vs. p-values for each comparison.
+   - Highlight significant genes that meet user-defined thresholds.
+   - Annotate genes of interest from a custom highlight list.
+
+4. **Venn Diagrams:**
+   - Display overlapping upregulated or downregulated genes between experimental conditions.
+   - Provide an overview of common and unique gene expression patterns across conditions.
+
+5. **GeneOverlap Analysis:**
+   - Calculate overlap statistics (e.g., Jaccard Index, odds ratio) to quantify gene list similarities.
+   - Generate heatmaps to visualize pairwise gene overlaps across conditions.
+
+6. **Pairwise Comparison Scatter Plots:**
+   - Create scatter plots comparing log2 fold changes between two datasets.
+   - Perform linear regression and calculate correlation coefficients.
+   - Highlight significant or user-specified genes.
+
+7. **TPM Heatmap and Clustering:** **Pending**
+   - Load TPM (Transcripts Per Million) data.
+   - Perform z-score normalization and k-means clustering on top variable genes.
+   - Visualize clusters using a heatmap and save cluster assignments to a CSV file.
+
+8. **ClusterProfiler Enrichment (optional):** **Pending**
+   - Perform Gene Ontology (GO) enrichment analysis on clustered genes.
+   - Generate bubble plots to illustrate significant enriched terms.
+
+---
+
+### **Script Parameters Overview:**
+
+The script allows the user to define several parameters for customizing the analysis:
+
+- **Input Files:**
+  - `input_filename`: Path to the input CSV/TSV file containing RNA-seq data.
+  - `genes_to_highlight`: Path to a file listing genes to highlight on volcano and scatter plots.
+  - `tpm_data_filename`: Path to the file containing TPM data for clustering analysis.
+
+- **Thresholds and Plot Settings:**
+  - `pvalue_threshold`: Adjusted p-value cutoff for significance.
+  - `log2FC_threshold`: Log2 fold-change threshold for significance.
+  - `number_of_genes_to_plot`: Number of top variable genes to include in the heatmap.
+  - `num_clusters`: Number of clusters for k-means analysis.
+  - `max_genes_to_highlight`: Maximum number of genes to annotate on plots.
+
+- **Output Directory:**
+  - `output_dir`: Directory where plots and results will be saved.
+
+---
+
+This script is designed to provide a flexible and reproducible workflow for analyzing gene expression from DESeq2 output files for either human or mouse genomes.
+
+
+### **Output Directory Structure**
+
+During execution, the script creates the following directories under `params$output_dir` to organize the results:
+
+1. **tables/**: Contains CSV files with processed data and cluster assignments.
+2. **plots/**: Stores all visualizations such as volcano plots, scatter plots, and heatmaps.
+3. **geneOverlap/**: Contains GeneOverlap result tables and heatmaps.
+4. **ClusterProfiler/**: Stores gene ontology (GO) and pathway enrichment results and plots.
+5. **GSEA/**: (If implemented) For Gene Set Enrichment Analysis output.
+
+***
+#Setup
+*Load libraries and create output directories*
+
+```{r setup, include=FALSE, echo=FALSE, warning=FALSE, message=FALSE }
+library(DESeq2)
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+library(GeneOverlap)
+library(clusterProfiler)
+library(readr)
+library(org.Hs.eg.db)
+library(org.Mm.eg.db)
+library(enrichplot)
+library(DOSE)
+library(enrichplot)
+library(msigdbr)
+library(patchwork)
+library(stats)
+library(biomaRt)
+library(pheatmap)
+library(ComplexHeatmap)
+library(ggvenn)
+library(RColorBrewer)
+library(viridis)
+library(kableExtra)
+library(circlize)
+library(tidyr)
+library(ggforce)
+#library(RRHO2)
+#library(AnnotationHub)
+
+# Create necessary subdirectories
+dir.create(params$output_dir, showWarnings = FALSE)
+dir.create(file.path(params$output_dir, "tables/"), showWarnings = FALSE)
+dir.create(file.path(params$output_dir, "plots/"), showWarnings = FALSE)
+dir.create(file.path(params$output_dir, "geneOverlap/"), showWarnings = FALSE)
+dir.create(file.path(params$output_dir, "ClusterProfiler/"), showWarnings = FALSE)
+dir.create(file.path(params$output_dir, "GSEA/"), showWarnings = FALSE)
+
+table_output_dir <- paste0(params$output_dir, "tables/")
+plot_output_dir <- paste0(params$output_dir, "plots/")
+geneOverlap_output_dir <- paste0(params$output_dir, "geneOverlap/")
+clusterProfiler_output_dir <- paste0(params$output_dir, "ClusterProfiler/")
+GSEA_output_dir <- paste0(params$output_dir, "GSEA/")
+
+```
+
+*Load and prepare data*
+#Load data
+```{r load files and prepare data, warning=FALSE, echo=FALSE}
+
+
+# Validate input filename
+stopifnot(file.exists(params$input_filename))
+
+# Read data file paths and clean names from the provided filename
+input_data <- read_csv(params$input_filename, col_names = TRUE)
+
+# Fix header names if needed
+if (!all(colnames(input_data) %in% c("sample", "name"))) {
+  colnames(input_data) <- c("sample", "name")
+}
+
+# Validate file paths
+stopifnot(all(file.exists(input_data$sample)))
+
+# Define organism-specific org.db
+orgdb <- if (tolower(params$species) == "homo sapiens") {
+  org.Hs.eg.db
+} else if (tolower(params$species) == "mus musculus") {
+  org.Mm.eg.db
+} else {
+  stop("Unsupported species for org.db mapping")
+}
+
+# Load and clean individual files
+
+read_data <- function(file_path) {
+  # Load .csv or .tsv
+  df <- if (grepl("\\.csv$", file_path)) {
+    readr::read_csv(file_path)
+  } else if (grepl("\\.tsv$", file_path)) {
+    readr::read_tsv(file_path)
+  } else {
+    stop("Unsupported file format. Please use .csv or .tsv.")
+  }
+
+  # Rename 'GeneID' to 'gene_id' if needed
+  if (!"gene_id" %in% colnames(df)) {
+    if ("GeneID" %in% colnames(df)) {
+      df <- dplyr::rename(df, gene_id = GeneID)
+    } else {
+      stop("Neither 'gene_id' nor 'GeneID' column found.")
+    }
+  }
+
+  # Clean Ensembl version numbers if present
+  df$gene_id <- gsub("\\..*", "", df$gene_id)
+
+  # Detect type per gene_id
+  df <- df %>%
+    mutate(
+      id_type = case_when(
+        grepl("^ENSG[0-9]+$", gene_id) ~ "ENSEMBL",
+        grepl("^[A-Z0-9\\-\\.]+$", gene_id) ~ "SYMBOL",
+        TRUE ~ "UNKNOWN"
+      )
+    )
+}
+
+# Load and standardize all datasets
+data_list <- lapply(input_data$sample, read_data)
+names(data_list) <- input_data$name
+
+# Load genes to highlight if provided
+if (!is.null(params$genes_to_highlight)) {
+  genes_to_highlight <- read.table(normalizePath(params$genes_to_highlight), header = FALSE, stringsAsFactors = FALSE)
+}
+
+# Calculate genome size from all genes before filtering
+all_genes_before_filtering <- unique(unlist(lapply(data_list, function(df) {
+  na.omit(df$gene_id)
+})))
+genomeSize <- length(all_genes_before_filtering)
+print(sprintf("Unfiltered genome size (number of genes tested in DESeq2): %d", genomeSize))
+
+# Prepare filtered gene lists by padj
+filtered_gene_lists <- lapply(data_list, function(df) {
+  unique(na.omit(df[df$padj < params$pvalue_threshold, "gene_id"]))
+})
+
+# Output directory path
+output_dir <- params$output_dir
+
+
+```
+* Plot p-value histograms *
+
+#p-value histograms
+
+```{r pval histogram, eval=TRUE}
+
+# Function to plot histograms of p-values
+plot_pvalue_histogram <- function(data, title, output_dir) {
+  # Histogram of raw p-values
+  raw_p_hist <- ggplot(data, aes(x = pvalue)) +
+    geom_histogram(binwidth = 0.05, fill = "#69b3a2", color = "white", boundary = 0) +
+    labs(title = paste(title, "- Raw P-value Distribution"),
+         x = "P-value", y = "Frequency") +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+
+  # Histogram of adjusted p-values
+  adj_p_hist <- ggplot(data, aes(x = padj)) +
+    geom_histogram(binwidth = 0.05, fill = "#404080", color = "white", boundary = 0) +
+    labs(title = paste(title, "- Adjusted P-value Distribution"),
+         x = "Adjusted P-value (padj)", y = "Frequency") +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+
+  # Save plots
+  ggsave(file.path(plot_output_dir, paste0(title, "_RawPvalue_Histogram.pdf")), plot = raw_p_hist, width = 7, height = 5)
+  ggsave(file.path(plot_output_dir, paste0(title, "_AdjPvalue_Histogram.pdf")), plot = adj_p_hist, width = 7, height = 5)
+
+  # Return plots to display in Rmd output
+  list(raw_p_hist, adj_p_hist)
+}
+
+# Apply the histogram function to each dataset
+pvalue_histograms <- lapply(names(data_list), function(name) {
+  data <- data_list[[name]]
+  
+  # Ensure both pvalue and padj columns exist before plotting
+  if ("pvalue" %in% colnames(data) && "padj" %in% colnames(data)) {
+    plot_pvalue_histogram(data, name, output_dir)
+  } else {
+    message(paste("Skipping dataset:", name, "- Missing pvalue or padj columns."))
+    NULL
+  }
+})
+
+# Print histograms for display in the Rmd
+for (plots in pvalue_histograms) {
+  if (!is.null(plots)) {
+    print(plots[[1]])  # Raw P-value histogram
+    print(plots[[2]])  # Adjusted P-value histogram
+  }
+}
+
+
+```
+\newpage
+
+#Volcano Plots
+*Plot Volcanos*
+
+
+```{r VolcanoPlots, warning=FALSE, message=FALSE, eval = FALSE}
+
+
+# Volcano plot function
+create_volcano_plot <- function(data, title, max_genes_to_highlight = params$max_genes_to_highlight) {
+  data <- data %>%
+    dplyr::filter(GeneSymbol %in% allowed_symbols) %>%
+    drop_na(padj, log2FoldChange) %>%
+    dplyr::mutate(log10padj = -log10(padj))
+
+  sig_data <- data %>%
+    filter(padj < params$pvalue_threshold & abs(log2FoldChange) > params$log2FC_threshold)
+
+  nonsig_data <- data %>%
+    filter(!(GeneSymbol %in% sig_data$GeneSymbol))
+
+  highlight_genes <- sig_data %>%
+    arrange(desc(log10padj)) %>%
+    head(n = params$max_genes_to_highlight)
+
+  p <- ggplot() +
+    geom_point(data = nonsig_data, aes(x = log2FoldChange, y = log10padj),
+               color = "#BEBEBE", size = 3, alpha = params$alpha) +
+    geom_point(data = sig_data %>% filter(log2FoldChange > 0),
+               aes(x = log2FoldChange, y = log10padj),
+               color = params$upreg_color, size = 3, alpha = params$alpha) +
+    geom_point(data = sig_data %>% filter(log2FoldChange < 0),
+               aes(x = log2FoldChange, y = log10padj),
+               color = params$downreg_color, size = 3, alpha = params$alpha) +
+    geom_point(data = highlight_genes,
+               aes(x = log2FoldChange, y = log10padj),
+               shape = 21, fill = "white", color = "black", stroke = 0.5, size = 3) +
+    geom_text_repel(data = highlight_genes,
+                    aes(x = log2FoldChange, y = log10padj, label = GeneSymbol),
+                    size = 5, colour = "black", max.overlaps = Inf) +
+    geom_vline(xintercept = 0, color = "black", linetype = "solid", linewidth = 0.5) +
+    geom_hline(yintercept = -log10(params$pvalue_threshold), color = "black", linetype = "dotdash", linewidth = 0.75) +
+    scale_x_continuous() +
+    scale_y_continuous() +
+    theme_minimal(base_size = 16) +
+    theme(
+      axis.line = element_line(color = "black"),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.25),
+      plot.title = element_text(size = 20, hjust = 0.5)
+    ) +
+    labs(title = title,
+         x = expression("log"[2]*" Fold Change"),
+         y = expression("-log"[10]*" padj"))
+  return(p)
+}
+
+# Print and save all volcano plots
+for (name in names(data_list)) {
+  volcano_plot <- create_volcano_plot(data_list[[name]], paste(name, "Volcano Plot"), max_genes_to_highlight = params$max_genes_to_highlight)
+  print(volcano_plot)  # Display in Rmd
+  ggsave(file.path(plot_output_dir, paste0(name, "_VolcanoPlot_DESeq2.pdf")),
+         plot = volcano_plot, width = 10, height = 9)
+}
+
+```
+
+
+#Venn Diagrams
+
+*Plot Venn Diagrams of all pair-wise overlaps*
+
+
+```{r venn diagrams of overlap, eval=FALSE}
+perform_gene_overlap_analysis <- function(data_list, pvalue_threshold, log2FC_threshold, output_dir) {
+
+  # Prepare gene lists for each dataset
+  gene_lists <- list()
+  for (name in names(data_list)) {
+    data <- data_list[[name]]
+
+    # Ensure 'gene_id' and 'GeneSymbol' exist in each dataset
+    if (!all(c("gene_id", "GeneSymbol") %in% colnames(data))) {
+      stop(paste("Dataset", name, "is missing required columns ('gene_id', 'GeneSymbol')."))
+    }
+
+    # Filter for upregulated and downregulated genes
+    up_genes <- data %>%
+      dplyr::filter(padj < pvalue_threshold, log2FoldChange > log2FC_threshold) %>%
+      dplyr::select(gene_id, GeneSymbol)
+
+    down_genes <- data %>%
+      dplyr::filter(padj < pvalue_threshold, log2FoldChange < -log2FC_threshold) %>%
+      dplyr::select(gene_id, GeneSymbol)
+
+    if (nrow(up_genes) > 0) gene_lists[[paste0(name, "_Up")]] <- up_genes
+    if (nrow(down_genes) > 0) gene_lists[[paste0(name, "_Down")]] <- down_genes
+  }
+
+  # Debugging: Print the sizes of gene lists
+  for (list_name in names(gene_lists)) {
+    cat(sprintf("Gene list '%s': %d genes\n", list_name, nrow(gene_lists[[list_name]])))
+  }
+
+  # Function to plot Venn diagrams with scaled circles
+  plot_venn_counts <- function(gene_lists, title, output_name) {
+    if (length(gene_lists) < 2) {
+      message("Not enough datasets for Venn diagram: ", title)
+      return(NULL)
+    }
+
+    # Convert lists to unique gene IDs for plotting
+    overlap_data <- lapply(gene_lists, function(df) unique(df$gene_id))
+
+   venn_plot <- ggvenn::ggvenn(
+      data = overlap_data,
+      show_elements = FALSE,     # Turn off showing elements (gene names)
+      show_percentage = FALSE,   # Disable percentages, only counts
+      fill_color = viridis::magma(n = length(overlap_data), begin = 0.2, end = 0.8),
+      stroke_size = 0.5,
+      text_size = 7,
+      set_name_size = 5,
+      auto_scale = TRUE # proportional size
+   ) +
+      labs(title = title) +
+      theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+
+    # Save plot to PDF and print to Rmd output
+    print(venn_plot)
+    ggsave(file.path(plot_output_dir, paste0(output_name, "_VennDiagram.pdf")), plot = venn_plot, width = 8, height = 8)
+  }
+
+
+ # Generate separate CSVs for each intersection, retaining only one GeneSymbol
+# Generate separate CSVs for each intersection
+generate_overlap_csv <- function(gene_lists) {
+  # Calculate pairwise intersections between all sets
+  combinations <- combn(names(gene_lists), 2, simplify = FALSE)
+
+  for (pair in combinations) {
+    set1 <- gene_lists[[pair[1]]]
+    set2 <- gene_lists[[pair[2]]]
+
+    # Find intersection of `gene_id`
+    intersection <- merge(set1, set2, by = "gene_id")
+
+    if (nrow(intersection) > 0) {
+      # Generate file name based on the comparison
+      comparison_name <- paste(pair, collapse = "_vs_")
+      output_file <- file.path(table_output_dir, paste0(comparison_name, "_Intersection.csv"))
+
+      # Export the intersection to a CSV file
+      write.csv(intersection, output_file, row.names = FALSE)
+      message(paste("Saved intersection to:", output_file))
+    } else {
+      message(paste("No intersection found for:", paste(pair, collapse = " vs ")))
+    }
+  }
+}
+
+  # Plot and save the Venn diagrams for upregulated and downregulated genes
+  plot_venn_counts(
+    gene_lists = gene_lists[grep("_Up$", names(gene_lists))],
+    title = "Upregulated Genes Overlap",
+    output_name = "Upregulated_Genes"
+  )
+
+  plot_venn_counts(
+    gene_lists = gene_lists[grep("_Down$", names(gene_lists))],
+    title = "Downregulated Genes Overlap",
+    output_name = "Downregulated_Genes"
+  )
+  
+   # Generate CSV with gene intersections
+  generate_overlap_csv(
+    gene_lists = gene_lists
+    )
+}
+
+# Call the function with parameters
+perform_gene_overlap_analysis(
+  data_list = data_list,
+  pvalue_threshold = params$pvalue_threshold,
+  log2FC_threshold = params$log2FC_threshold,
+  output_dir = plot_output_dir
+)
+
+```
+\newpage
+
+#GeneOverlap
+*Perform GeneOverlap analysis and plot heatmaps*
+```{r GeneOverlap, warning = FALSE, eval = TRUE}
+
+perform_pairwise_gene_overlap <- function(data_list, pvalue_threshold, output_dir) {
+  
+  # Step 1: Prepare full and filtered gene lists
+  all_genes <- unique(unlist(lapply(data_list, function(df) df$gene_id)))
+
+  filtered_gene_lists <- lapply(data_list, function(df) {
+    df %>%
+      filter(!is.na(padj), padj < pvalue_threshold) %>%
+      pull(gene_id) %>%
+      unique()
+  })
+
+  # Debug: Check list sizes
+  print("Gene list sizes:")
+  print(sapply(filtered_gene_lists, length))
+
+  # Step 2: Calculate genome size
+  genome_size <- length(all_genes)
+  cat(sprintf("Calculated dynamic genome size: %d\n", genome_size))
+
+  # Step 3: Determine number of conditions
+  condition_count <- length(filtered_gene_lists)
+
+  if (condition_count == 2) {
+    message("Only two conditions detected; skipping heatmap generation.")
+
+    # Extract the two lists and their names
+    list_names <- names(filtered_gene_lists)
+    gene_list1 <- filtered_gene_lists[[1]]
+    gene_list2 <- filtered_gene_lists[[2]]
+
+    # Perform overlap analysis using GeneOverlap
+    go.obj <- newGeneOverlap(gene_list1, gene_list2, genome.size = genome_size)
+    go.obj <- testGeneOverlap(go.obj)
+
+    # Manually calculate Jaccard index
+    intersection_size <- length(getIntersection(go.obj))
+    union_size <- length(union(gene_list1, gene_list2))
+    jaccard_index <- if (union_size > 0) intersection_size / union_size else 0
+
+    # Create and print result summary
+    comparison_results <- data.frame(
+      Condition_Pair = paste(list_names[1], "vs", list_names[2]),
+      Odds_Ratio = getOddsRatio(go.obj),
+      P_Value = getPval(go.obj),
+      Jaccard_Index = jaccard_index,
+      Intersection_Size = intersection_size,
+      stringsAsFactors = FALSE
+    )
+
+    print(comparison_results)
+    print(knitr::kable(comparison_results, format = "html") %>% kableExtra::kable_styling()) #for Markdown
+    
+    # Save results to CSV
+    write.csv(comparison_results, file.path(output_dir, "GeneOverlap_Results.csv"), row.names = FALSE)
+
+  } else if (condition_count > 2) {
+    message("More than two conditions detected; generating heatmaps.")
+
+    # Perform GeneOverlap analysis across multiple conditions
+    gom <- newGOM(filtered_gene_lists, genome.size = genome_size)
+
+    # Step 4: Extract matrices for heatmaps
+    odds_matrix <- getMatrix(gom, "odds.ratio")
+    jaccard_matrix <- getMatrix(gom, "Jaccard")
+    pval_matrix <- getMatrix(gom, "pval")
+
+    # Generate and display heatmaps
+    OR_heatmap <- drawHeatmap(gom, what = "odds.ratio", grid.col = c("Blues"), note.col = c("black"))
+    pdf(file.path(output_dir, "GeneOverlap_OddsRatio_Heatmap.pdf"))
+    print(OR_heatmap)
+    dev.off()
+    
+    print(OR_heatmap) #to markdown
+    
+    JI_heatmap <- drawHeatmap(gom, what = "Jaccard", grid.col = c("Purples"), note.col = c("black"))
+    pdf(file.path(output_dir, "GeneOverlap_JaccardIndex_Heatmap.pdf"))
+    print(JI_heatmap)
+    dev.off()
+  
+    print(JI_heatmap) #to markdown
+    
+    # Step 5: Compile and save comparison results
+    comparison_results <- data.frame(
+      Pair = character(),
+      Odds_Ratio = numeric(),
+      Jaccard_Index = numeric(),
+      P_Value = numeric(),
+      stringsAsFactors = FALSE
+    )
+
+    for (i in rownames(odds_matrix)) {
+      for (j in colnames(odds_matrix)) {
+        if (i != j) {
+          comparison_results <- rbind(comparison_results, data.frame(
+            Pair = paste(i, "vs", j),
+            Odds_Ratio = odds_matrix[i, j],
+            Jaccard_Index = jaccard_matrix[i, j],
+            P_Value = pval_matrix[i, j]
+          ))
+        }
+      }
+    }
+
+    # Save and display results
+    write.csv(comparison_results, file.path(output_dir, "GeneOverlap_Results.csv"), row.names = FALSE)
+    
+    print(comparison_results)
+    
+    print(knitr::kable(comparison_results, format = "html") %>% kableExtra::kable_styling()) #for Markdown
+  } else {
+    message("No valid conditions for overlap analysis.")
+  }
+}
+
+# Call the function
+perform_pairwise_gene_overlap(
+  data_list = data_list,
+  pvalue_threshold = params$pvalue_threshold,
+  output_dir = geneOverlap_output_dir
+)
+
+```
+
+\newpage
+#Pairwise comparison scatter plots
+
+*Perform pairwise comparison scatter plots*
+```{r pairwise comparison and plotting, error = TRUE, echo= FALSE, eval=FALSE}
+
+pairwise_comparison_and_plotting <- function(data1, data2, pvalue_threshold, clean_name1, clean_name2, genes_to_highlight = NULL) {
+  
+  # Ensure required columns
+  required_cols <- c("gene_id", "log2FoldChange", "padj", "GeneSymbol")
+  if (!all(required_cols %in% colnames(data1))) stop("Missing required columns in data1.")
+  if (!all(required_cols %in% colnames(data2))) stop("Missing required columns in data2.")
+
+  # Merge datasets and retain GeneSymbol from one dataset
+  merged_data <- merge(data1, data2, by = "gene_id", suffixes = c("_1", "_2"))
+  merged_data <- merged_data %>% dplyr::mutate(GeneSymbol = coalesce(GeneSymbol_1, GeneSymbol_2))
+
+  # Filter merged data by p-value threshold
+  filtered_data <- merged_data %>%
+    dplyr::filter(padj_1 < pvalue_threshold & padj_2 < pvalue_threshold)
+
+  # Handle genes to highlight
+  highlight_genes <- if (!is.null(genes_to_highlight)) {
+    as.character(genes_to_highlight[[1]])
+  } else {
+    character(0)
+  }
+  
+  # Ensure GeneSymbol exists in filtered_data
+  if (!"GeneSymbol" %in% colnames(filtered_data)) {
+    stop("Error: GeneSymbol column not found in filtered_data.")
+  }
+
+  # Filter for highlighted genes
+  highlight_data <- filtered_data %>% dplyr::filter(GeneSymbol %in% highlight_genes)
+  
+    if (nrow(filtered_data) > 1) {
+    
+    # Perform correlation analysis
+    correlation_coefficient <- cor(filtered_data$log2FoldChange_1, filtered_data$log2FoldChange_2, use = "complete.obs")
+    lm_model <- lm(log2FoldChange_2 ~ log2FoldChange_1, data = filtered_data)
+    coeff <- coef(summary(lm_model))
+    intercept <- coeff[1, 1]
+    slope <- coeff[2, 1]
+    p_value <- summary(lm_model)$coefficients[2, 4] 
+
+    # Calculate axis limits with 10% buffer
+    max_abs_x <- max(abs(filtered_data$log2FoldChange_1)) * 1.1
+    max_abs_y <- max(abs(filtered_data$log2FoldChange_2)) * 1.1
+    
+    # Generate the scatter plot
+    plot <- ggplot(filtered_data, aes(x = log2FoldChange_1, y = log2FoldChange_2)) +
+      geom_point(shape = 16, color = "#A75C83", size = 3, stroke = 0.01, alpha = params$alpha) #+
+      #geom_point(data = highlight_data, color ="#111111", aes(x = log2FoldChange_1, y = log2FoldChange_2), size = 3, shape = 21, stroke = 0.5) +
+       # geom_text_repel(
+      #  data = highlight_data,
+      #  aes(label = GeneSymbol),
+      #  color = "black",
+      #  size = 6,
+      #  max.overlaps = params$max_genes_to_highlight,
+      #  box.padding = 0.5,
+      #  point.padding = 0.5,
+      #  force = 5,
+      #  nudge_x = 1,
+      #  nudge_y = 1,
+      #  direction = "both"
+      #) +
+      geom_smooth(method = "lm", color = "lightgray", se = TRUE) +
+      geom_vline(xintercept = 0, color = "gray", linetype = "solid", linewidth = 0.5) +
+      geom_hline(yintercept = 0,  color = "gray", linetype = "solid", linewidth = 0.5) +
+      theme(
+      legend.position = "none",
+      axis.text.y = element_text(size = 18, colour = "black"),
+      axis.text.x = element_text(size = 18, colour = "black"),
+      axis.title.y = element_text(size = 18, colour = "black"),
+      axis.title.x = element_text(size = 18, colour = "black"),
+      panel.background = element_blank(),
+        #panel.grid.major = element_line(color = "#D3D3D380", linewidth = 0.5),
+      #panel.grid.minor = element_line(color = "#D3D3D380", linewidth = 0.25),
+      axis.line = element_line(colour = "black"),
+      panel.border = element_rect(colour = "black", fill = NA, linewidth = 0.25),
+      plot.title = element_text(size = 20, hjust = 0),
+      plot.subtitle = element_text(hjust = 0.5)
+      ) +
+      labs(
+        title = paste0(clean_name1, " vs ", clean_name2, " Log2FoldChange Correlation Plot"),
+        subtitle = sprintf("Pearson Correlation: %.2f, Intercept: %.2f, Slope: %.2f, P-value: %.2g", correlation_coefficient, intercept, slope, p_value),
+        x = paste(clean_name1, "log2FC"),
+        y = paste(clean_name2, "log2FC")
+      ) +
+      scale_x_continuous(limits = c(-max_abs_x, max_abs_x)) +
+      scale_y_continuous(limits = c(-max_abs_y, max_abs_y))
+
+    # Display plot and save
+    print(plot)
+    ggsave(paste0(plot_output_dir, clean_name1, "-vs-", clean_name2, "_log2FC-Correlation_DESeq2.pdf"), plot = plot, width = 8, height = 8)
+  } else {
+    message("Not enough data to calculate correlation or perform regression.")
+  }
+}
+
+# Filter out empty or invalid datasets first
+valid_data_list <- Filter(function(x) nrow(x) > 0, data_list)
+
+# Generate unique pairs of datasets for comparisons
+dataset_pairs <- combn(names(valid_data_list), 2, simplify = FALSE)
+
+# Perform pairwise comparisons
+for (pair in dataset_pairs) {
+  clean_name1 <- pair[1]
+  clean_name2 <- pair[2]
+
+  # Print progress and handle each pair safely
+  message(sprintf("Comparing: %s vs %s", clean_name1, clean_name2))
+
+  tryCatch({
+    pairwise_comparison_and_plotting(
+      data1 = valid_data_list[[clean_name1]], 
+      data2 = valid_data_list[[clean_name2]], 
+      pvalue_threshold = params$pvalue_threshold, 
+      clean_name1 = clean_name1, 
+      clean_name2 = clean_name2, 
+      genes_to_highlight = NULL
+    )
+  }, error = function(e) {
+    message(sprintf("Error during comparison: %s vs %s - %s", clean_name1, clean_name2, e$message))
+  })
+}
+
+
+```
+
+#RRHO2 Rank comparisons of DESeq2 using log2FC and -log2(padj)
+```{r RRHO rank comparison, include = FALSE, eval=FALSE}
+
+perform_rrho2_analysis <- function(data1, data2, name1, name2, output_dir) {
+  # Ensure the necessary columns exist
+  required_cols <- c("gene_id", "log2FoldChange", "padj")
+  if (!all(required_cols %in% colnames(data1))) stop("Missing required columns in data1.")
+  if (!all(required_cols %in% colnames(data2))) stop("Missing required columns in data2.")
+
+  # Filter out NA
+ data1 <- data1 %>% filter(!is.na(log2FoldChange), !is.na(gene_id), !is.na(padj))
+ data2 <- data2 %>% filter(!is.na(log2FoldChange), !is.na(gene_id), !is.na(padj))
+  
+  # Ensure both datasets have the same genes
+  common_genes <- intersect(data1$gene_id, data2$gene_id)
+  data1 <- data1 %>% filter(gene_id %in% common_genes)
+  data2 <- data2 %>% filter(gene_id %in% common_genes)
+  
+  if (nrow(data1) == 0 | nrow(data2) == 0) {
+    message("Skipping RRHO2 for ", name1, " vs ", name2, " due to empty data after filtering.")
+    return(NULL)
+  }
+
+  # Rank genes by log2FoldChange * -log10(padj) for better ranking
+  data1 <- data1 %>% mutate(RankValue = log2FoldChange * -log10(padj))
+  data2 <- data2 %>% mutate(RankValue = log2FoldChange * -log10(padj))
+  
+  ranked_list1 <- data1 %>% arrange(desc(RankValue)) %>% dplyr::select(gene_id, RankValue)
+  ranked_list2 <- data2 %>% arrange(desc(RankValue)) %>% dplyr::select(gene_id, RankValue)
+  
+  rank1 <- data.frame(Gene = ranked_list1$gene_id, Value = ranked_list1$RankValue)
+  rank2 <- data.frame(Gene = ranked_list2$gene_id, Value = ranked_list2$RankValue)
+
+  # Debugging step: Print vector lengths
+  message("Rank1 length: ", nrow(rank1), " | Rank2 length: ", nrow(rank2))
+  
+  # Ensure vectors are non-empty and valid for RRHO2
+  if (nrow(rank1) == 0 | nrow(rank2) == 0) {
+    message("Skipping RRHO2 for ", name1, " vs ", name2, " due to empty rankings.")
+    return(NULL)
+  }
+
+  # Perform RRHO2 analysis using the correct RRHO2 function
+  rrho2_result <- RRHO2::RRHO2_initialize(list1 = rank1, list2 = rank2, log10.ind = TRUE, method = "fisher")
+  
+  # Save and output RRHO2 heatmap
+  rrho2_heatmap_path <- file.path(output_dir, paste0(name1, "_vs_", name2, "-RRHO2_heatmap.pdf"))
+  pdf(rrho2_heatmap_path, width = 10, height = 8)
+
+color_ramp_colors <- colorRampPalette(c(params$downreg_color, "#FFFFFF", params$upreg_color))(100)
+    RRHO2::RRHO2_heatmap(rrho2_result, colorGradient = color_ramp_colors)
+  dev.off()
+  
+  print(RRHO2::RRHO2_heatmap(rrho2_result))
+  
+  message("RRHO2 analysis completed for ", name1, " vs ", name2)
+}
+
+######################
+#Redfine heatmap function 
+
+
+
+
+
+# Run RRHO2 and Venn Analysis for each pair of conditions
+if (length(data_list) > 1) {
+  dataset_pairs <- combn(names(data_list), 2, simplify = FALSE)
+  for (pair in dataset_pairs) {
+    perform_rrho2_analysis(
+      data1 = data_list[[pair[1]]], 
+      data2 = data_list[[pair[2]]], 
+      name1 = pair[1], 
+      name2 = pair[2], 
+      output_dir = plot_output_dir
+    )
+   }
+}
+
+
+
+```
+
+
+#TPM  Heatmap
+
+```{r TPM_heatmap, eval=FALSE, warning=FALSE, message=FALSE}
+
+# Load TPM data
+tpm_data <- readr::read_tsv(params$tpm_data_file)
+#stopifnot("GeneSymbol" %in% colnames(tpm_data))
+
+# Extract TPM matrix and gene symbols
+gene_symbols <- tpm_data$GeneSymbol
+tpm_matrix <- as.matrix(tpm_data[, setdiff(colnames(tpm_data), "gene_id")])
+rownames(tpm_matrix) <- gene_symbols
+tpm_matrix <- apply(tpm_matrix, 2, as.numeric)
+rownames(tpm_matrix) <- gene_symbols
+
+# Order samples
+ordered_columns <- c(
+  "CONTROL_REP1", "CONTROL_REP2", "CONTROL_REP3",
+  "GSK591.3hr_REP1", "GSK591.3hr_REP2", "GSK591.3hr_REP3",
+  "GSK591.12hr_REP1", "GSK591.12hr_REP2", "GSK591.12hr_REP3")
+    
+ordered_columns <- intersect(ordered_columns, colnames(tpm_matrix))
+tpm_matrix <- tpm_matrix[, ordered_columns]
+
+# Filter lowly expressed genes
+median_tpm <- apply(tpm_matrix, 1, median, na.rm = TRUE)
+tpm_matrix <- tpm_matrix[median_tpm >= 1, ]
+
+# CV filtering
+gene_means <- rowMeans(tpm_matrix, na.rm = TRUE)
+gene_sds <- apply(tpm_matrix, 1, sd, na.rm = TRUE)
+gene_cv <- gene_sds / gene_means
+
+# Select top variable genes
+top_n <- params$num_genes_to_plot_zscore
+top_genes <- names(sort(gene_cv, decreasing = TRUE))[1:top_n]
+tpm_selected <- tpm_matrix[top_genes, ]
+
+# Z-score normalization
+zscore_matrix <- t(scale(t(tpm_selected)))
+zscore_matrix <- zscore_matrix[complete.cases(zscore_matrix), ]
+
+# K-means clustering (no PCA)
+num_clusters <- params$num_clusters
+set.seed(42)
+kmeans_result <- kmeans(zscore_matrix, centers = num_clusters, nstart = 50)
+row_order <- order(kmeans_result$cluster)
+
+# Save cluster assignments and cluster-specific gene lists
+cluster_output <- data.frame(
+  GeneSymbol = rownames(zscore_matrix),
+  Cluster = kmeans_result$cluster
+)
+write.csv(cluster_output, file.path(table_output_dir, "TPM_cluster_assignments.csv"), row.names = FALSE)
+
+for (i in seq_len(num_clusters)) {
+  cluster_genes <- cluster_output %>% filter(Cluster == i) %>% pull(GeneSymbol)
+  write.table(
+    cluster_genes,
+    file = file.path(table_output_dir, paste0("TPM_Cluster_", i, "_GeneSymbols_PROseq_GSK591_Timecourse.txt")),
+    row.names = FALSE, col.names = FALSE, quote = FALSE
+  )
+}
+
+# Define color scale
+z_limit <- max(abs(zscore_matrix), na.rm = TRUE)
+col_fun <- circlize::colorRamp2(
+  c(-z_limit, 0, z_limit),
+  c(params$downreg_color, "gray95", params$upreg_color)
+)
+
+# Heatmap
+heatmap_plot <- ComplexHeatmap::Heatmap(
+  zscore_matrix[row_order, ordered_columns],
+  name = "Z-score",
+  cluster_rows = FALSE,
+  cluster_columns = FALSE,
+  show_row_names = TRUE,
+  row_names_gp = grid::gpar(fontsize = 2),
+  column_names_rot = 90,
+  column_names_gp = grid::gpar(fontsize = 10),
+  col = col_fun,
+  row_split = kmeans_result$cluster[row_order],
+  row_gap = unit(2, "mm")
+)
+
+# Save heatmap as PDF
+pdf(file.path(plot_output_dir, "TPM_Zscore_Heatmap_RNASeq_3-12-GSK591.pdf"), width = 10, height = 7)
+draw(heatmap_plot)
+dev.off()
+
+# Display in Rmd
+print(heatmap_plot)
+
+
+```
+
+
+#TPM PCA Analysis
+```{r PCA_analysis, warning=FALSE, message=FALSE}
+
+# Load TPM data
+tpm_data <- readr::read_tsv(params$tpm_data_file)
+  
+# Extract TPM matrix and assign rownames properly
+#tpm_matrix <- tpm_filtered[, setdiff(colnames(tpm_filtered), "gene_id")]
+tpm_matrix <- as.matrix(tpm_matrix)
+
+# Ensure matrix is numeric safely
+mode(tpm_matrix) <- "numeric"  # preserves rownames
+
+# Log-transform TPM
+log_tpm <- log2(tpm_matrix + 1)
+
+summary(apply(log_tpm, 1, sd))
+
+# After log-transform: remove any genes with zero variance
+nonzero_var_genes <- apply(log_tpm, 1, function(x) sd(x) > 0)
+log_tpm_filtered <- log_tpm[nonzero_var_genes, ]
+
+# Assign rownames
+
+# Filter: retain genes with TPM >= 10 in at least 3 samples
+#keep_genes <- apply(tpm_matrix, 1, function(x) sum(x >= 10, na.rm = TRUE) >= 3)
+#head(keep_genes)
+#tpm_matrix <- tpm_matrix[keep_genes, ]
+
+
+
+# Transpose and run PCA
+pca <- prcomp(t(log_tpm_filtered), scale. = TRUE)
+
+# Prepare sample group info
+sample_info <- data.frame(
+  Sample = colnames(log_tpm_filtered),
+  Condition = gsub("_REP[123]", "", colnames(log_tpm_filtered))
+)
+
+# Calculate percent variance explained
+explained_var <- round(100 * summary(pca)$importance[2, 1:2], 1)
+
+# Create PCA dataframe
+pca_df <- as.data.frame(pca$x[, 1:2])
+pca_df$Condition <- sample_info$Condition
+
+# Adjust color palette: skip the light yellow
+n_colors <- length(unique(pca_df$Condition))
+ylgnbu_colors <- brewer.pal(n = 9, name = "YlGnBu")[3:(3 + n_colors - 1)]
+names(ylgnbu_colors) <- unique(pca_df$Condition)
+
+# Compute centroids for labeling ellipses
+centroids <- aggregate(cbind(PC1, PC2) ~ Condition, data = pca_df, mean)
+
+# Plot PCA with ellipses and group labels
+p <- ggplot(pca_df, aes(x = PC1, y = PC2, color = Condition)) +
+  geom_point(size = 4) +
+  ggforce::geom_mark_ellipse(aes(fill = Condition), alpha = 0.2, color = NA) +
+  geom_text_repel(data = centroids, aes(label = Condition), size = 6, color = "black",
+                  nudge_x = 15, nudge_y = 15, point.padding = 0.8,
+                  box.padding = 0.5, max.overlaps = Inf, segment.color = NA) +
+  scale_color_manual(values = ylgnbu_colors) +
+  scale_fill_manual(values = ylgnbu_colors) +
+  labs(
+    title = "PCA of TPM Expression (log2-transformed)",
+    x = paste0("PC1 (", explained_var[1], "%)"),
+    y = paste0("PC2 (", explained_var[2], "%)")
+  ) +
+  scale_x_continuous(expand = expansion(mult = 0.25)) +
+scale_y_continuous(expand = expansion(mult = 0.25)) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    axis.ticks = element_line(color = "black"),
+    axis.line = element_line(color = "black"),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
+    plot.title = element_text(hjust = 0.5)
+  )
+
+# Save and display
+ggsave(file.path(plot_output_dir, "PCA_TPM_RNASeq_3-12-GSK591.pdf"), plot = p, width = 6, height = 5)
+print(p)
+```
+
+
+#ClusterProfiler
+
+```{r enrichplot_dotplot_combined, message=FALSE, warning=FALSE}
+
+# Create list of gene IDs (ENSEMBL) passing DE criteria
+gene_lists <- lapply(names(data_list), function(tp) {
+  df <- data_list[[tp]]
+  if (!is.null(df)) {
+    filtered <- dplyr::filter(df, padj < params$pvalue_threshold & abs(log2FoldChange) > params$log2FC_threshold)
+    return(filtered$gene_id)
+  } else {
+    return(NULL)
+  }
+})
+names(gene_lists) <- names(data_list)
+
+# Run compareCluster for GO enrichment using enrichGO
+compare_go <- compareCluster(
+  geneCluster = gene_lists,
+  fun = "enrichGO",
+  OrgDb = org.Hs.eg.db,
+  keyType = "ENSEMBL",
+  ont = "ALL",
+  pvalueCutoff = 0.05,
+  pAdjustMethod = "BH",
+  readable = TRUE
+)
+
+# Simplify to reduce redundant GO terms
+compare_go_simple <- simplify(compare_go, cutoff = 0.7, by = "p.adjust", select_fun = min)
+
+# Use compareCluster results (already simplified)
+p <- dotplot(compare_go_simple, 
+             x = "Cluster", 
+             showCategory = params$max_terms_to_plot, 
+             split = "ONTOLOGY") +
+  facet_grid(ONTOLOGY ~ Cluster, scales = "free_y", space = "free") +
+  labs(
+    title = "GO Term Enrichment Over Timepoints",
+    x = "Timepoint", y = "GO Term"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.y = element_text(size = 10),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    strip.text = element_text(face = "bold")
+  )
+
+# Display and save
+print(p)
+ggsave(file.path(plot_output_dir, "GO_Timecourse_Enrichment_Faceted.pdf"), plot = p, width = 14, height = 10)
+
+```

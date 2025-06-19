@@ -1,0 +1,368 @@
+---
+title: "Analysis of Jacob Roth's PRMT5i Timecoures 1,3,12 hours GSK591"
+author: "David Shechter"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+  df_print: paged
+html_notebook: default
+pdf_document: default
+---
+
+Data is loaded from pre-computed Salmon quant outputs
+
+
+```{r "setup", include=FALSE}
+
+# Set the WD here
+knitr::opts_knit$set(root.dir = normalizePath('C:\\Users\\david\\OneDrive\\Bioinformatics\\PRMTi\\2024-06_PRMT5i_1-3-12hrs'))
+
+#load librarys
+library(tidyverse)
+library(DESeq2)
+library(tximport)
+library(apeglm)
+library(EnhancedVolcano)
+library(RColorBrewer)
+library(pheatmap)
+library(knitr)
+library(kableExtra)
+library(ggplot2)
+
+# General function to load data
+load_data <- function(file_path, delimiter = ",", header = TRUE) {
+  read.delim(file_path, sep = delimiter, header = header)
+}
+
+#For DESeq2 - count threshold
+count_cutoff = 10
+
+#For QC output only
+pval_threshold = 0.01
+log2FC_threshold = 1 
+
+#this tx2gene and combined gtf file was independently generated, necessary for spike-in analysis
+dm6.hg38.tx2gene_file = 'C:\\Users\\david\\OneDrive\\Bioinformatics\\PRMTi\\2024-05_PRMT5i-Fractionation\\dm6.hg38.tx2gene.csv'
+gtf_gene_annotation_table = 'C:\\Users\\david\\OneDrive\\Bioinformatics\\PRMTi\\2024-05_PRMT5i-Fractionation\\dm6.hg38.gtf_gene_annotation_table.txt'
+
+
+#initialize this list for filling during the function
+summary_stats_list <- list()
+
+```
+
+```{r "Define Functions", include=FALSE}
+
+# DESeq2 Analysis Function
+#This function performs DESeq2 analysis, generates plots, saves the results, and provides summary statistics.
+
+# General function to run DESeq2 analysis, with features as indicated
+run_deseq2_analysis <- function(txi, col_data, condition_ref, features, output_prefix, use_spikeIn, pvalue_threshold = pval_threshold) {
+  
+  dds <- DESeqDataSetFromTximport(txi, colData = col_data, design = ~ condition)
+  
+  if (use_spikeIn) {
+  
+      # Check if 'Chromosome' column exists in features
+    if(!"Chromosome" %in% colnames(features)) {
+      stop("The features data frame does not contain a 'Chromosome' column.")
+    }
+    
+    #Define ctrlGenes from all gene annotated with dm6 in the Chromosome column
+    
+    
+    ctrlGenes <- rownames(dds) %in% unique(features %>% filter(grepl("dm6", Chromosome)) %>% pull(gene_id))
+    if (length(ctrlGenes) == 0) {
+      stop("No control genes found with 'dm6' in the Chromosome column.")
+    }
+    dds_ctrl <- dds[ctrlGenes,]
+    dds_ctrl <- dds_ctrl[rowSums(counts(dds_ctrl) >= count_cutoff),]
+    
+    nm <- assays(dds_ctrl)[["avgTxLength"]]
+    counts <- counts(dds_ctrl)
+    sf <- counts / nm
+    sf <- sf[!duplicated(sf),]
+    sf <- estimateSizeFactorsForMatrix(sf)
+    
+    #Output scale factor for each run
+    print("Scale factors for", output_prefix, "_vs_", condition_ref)
+    print(sf)
+    
+    #Define tested genes as those without dm6 in Chromosome column
+    testGenes <- rownames(dds) %in% unique(features %>% filter(!grepl("dm6", Chromosome)) %>% pull(gene_id))
+    
+    if (length(testGenes) == 0) {
+      stop("No test genes found without 'dm6' in the Chromosome column.")
+    }
+    dds <- dds[testGenes,]
+    #dds <- dds_ctrl[rowSums(counts(dds) >= count_cutoff),]
+    keep <- rowSums(counts(dds)) >= count_cutoff
+    dds <- dds[keep,]
+    sizeFactors(dds) <- sf
+  } 
+  
+  else {
+    # Normalize using avgTxLength only, not with ctrlGenes spik In
+    nm <- assays(dds)[["avgTxLength"]]
+    counts <- counts(dds)
+    sf <- counts / nm
+    sf <- estimateSizeFactorsForMatrix(sf)
+    sizeFactors(dds) <- sf
+    
+    # Filter out dm6 genes
+    
+    if(!"Chromosome" %in% colnames(features)) {
+      stop("The features data frame does not contain a 'Chromosome' column.")
+    }
+    
+    #Define tested genes as those without dm6 in Chromosome column
+    testGenes <- rownames(dds) %in% unique(features %>% filter(!grepl("dm6", Chromosome)) %>% pull(gene_id))
+    
+    if (length(testGenes) == 0) {
+      stop("No test genes found without 'dm6' in the Chromosome column.")
+    }
+    
+    dds <- dds[testGenes,]
+    keep <- rowSums(counts(dds)) >= count_cutoff
+    dds <- dds[keep,]
+  }
+  
+  dds$condition <- relevel(dds$condition, ref = condition_ref)
+  dds <- DESeq(dds)
+  
+  vsd <- vst(dds, blind = FALSE)
+  
+  # setup for saving output files
+  
+  # Create output directory
+  output_dir <- paste0("Output")
+  if (!dir.exists(output_dir)) {
+    dir.create(output_dir)
+  }
+  
+  # Setup output files
+  output_prefix <- file.path(output_dir, output_prefix)
+  
+  # Heatmap - uncomment if you want it, generally not useful
+    #pheatmap(assay(vsd),
+  #         cluster_rows = FALSE,
+  #         show_rownames = FALSE,
+  #         cluster_cols = FALSE,
+  #         annotation_col = as.data.frame(colData(dds)[,"condition"], row.names=rownames(colData(dds))))
+  
+  sampleDists <- dist(t(assay(vsd)))
+  sampleDistMatrix <- as.matrix(sampleDists)
+  rownames(sampleDistMatrix) <- paste(vsd$condition, sep="-")
+  colors <- colorRampPalette(rev(brewer.pal(9, "Blues")))(255)
+  
+  # Sample distance heatmap
+  pheatmap(sampleDistMatrix,
+           clustering_distance_rows = sampleDists,
+           clustering_distance_cols = sampleDists,
+           col = colors)
+  
+  # PCA plot
+  plotPCA(vsd, intgroup = c("condition"))
+  
+  for (i in 2:length(unique(resultsNames(dds)))){
+    name <- unique(resultsNames(dds))[i]
+    res <- lfcShrink(dds, coef = name, type = "apeglm")
+    res$gene_id <- rownames(res)
+    res_df <- as.data.frame(res)
+    res_df <- merge(res_df, features, by.x = "gene_id", by.y = "gene_id")
+    res_df <- res_df[order(res_df$padj),]
+    
+    if(use_spikeIn) {
+      write.csv(res_df, file = paste0(output_prefix, "_vs_", condition_ref, "_SpikeInNormalized_DESEQ2.csv"), row.names = FALSE) }
+    else {
+    write.csv(res_df, file = paste0(output_prefix, "_vs_", condition_ref, "_noSpikeIn_DESEQ2.csv"), row.names = FALSE) 
+    }
+    
+    # MA plot
+    plotMA(res)
+    
+    res_df <- res_df[!is.na(res_df$padj),]
+    
+    # Volcano plot
+    volcano <- EnhancedVolcano(res_df,
+                          lab = res_df$GeneSymbol,
+                          x = 'log2FoldChange',
+                          y = 'padj',
+                          title = name,
+                          pCutoff = pvalue_threshold,
+                          FCcutoff = log2FC_threshold,
+                          pointSize = 2.0,
+                          labSize = 5.0,
+                          col = c('#d4d4d4', '#d4d4d4', '#fdbb84', '#e34a33'),
+                          colAlpha = 0.5)
+    
+    print(volcano)
+    
+    if(use_spikeIn) {
+    ggsave(filename = paste0(output_prefix, "_vs_", condition_ref, "_SpikeInNormalized_VolcanoPlot.pdf"), plot = volcano)
+    }
+    else {
+      ggsave(filename = paste0(output_prefix, "_vs_", condition_ref, "_noSpikeIn_VolcanoPlot.pdf"), plot = volcano)
+    }
+    # P-value histogram
+    
+    pval_hist <- ggplot(res_df, aes(x = padj)) + 
+      geom_histogram(binwidth = 0.05, fill = "darkgray", color = "black") + 
+      theme_minimal() +
+      labs(title = paste0("P-value Histogram: ", name), x = "Adjusted P-value", y = "Frequency")
+    print(pval_hist)
+    
+     # Summary statistics
+    summary_stats <- res_df %>% 
+      summarise(
+        total_genes = n(),
+        significant_genes = sum(padj < pvalue_threshold, na.rm = TRUE),
+        upregulated_genes = sum(log2FoldChange > 0 & padj < pvalue_threshold, na.rm = TRUE),
+        downregulated_genes = sum(log2FoldChange < 0 & padj < pvalue_threshold, na.rm = TRUE)
+      )
+    
+    print(knitr::kable(summary_stats, caption = paste0("Summary Statistics for ", name)) %>% 
+            kableExtra::kable_styling(bootstrap_options = "striped", full_width = F))
+    
+   }
+}
+
+# Function to call DESeq2
+
+call_DESeq2_analysis <- function(test_sample_name, reference_sample_name, prefix, use_spikeIn) {
+
+    # Filter files and samples for both test and reference conditions
+  
+  testfiles <- files[grepl(test_sample_name, names(files))]
+  referencefiles <- files[grepl(reference_sample_name, names(files))]
+  
+  samples_to_test <- samples[grepl(test_sample_name, samples$condition) | grepl(reference_sample_name, samples$condition),]
+  print(samples_to_test)
+  
+  # Combine test and reference files
+  combined_files <- c(referencefiles, testfiles)
+  
+  # Debugging output
+  #print(paste("Number of combined files:", length(combined_files)))
+  #print(paste("Number of samples to test:", nrow(samples_to_test)))
+  #print("Combined files:")
+  #print(combined_files)
+  #print("Samples to test:")
+  #print(samples_to_test)
+  
+  # Ensure the lengths of combined_files and samples_to_test match
+  if(length(combined_files) != nrow(samples_to_test)) {
+    stop("The number of combined files does not match the number of samples to test.")
+  }
+  
+  # Assign names to combined_files
+  names(combined_files) <- samples_to_test$sample
+  
+  # Debugging output to verify names assignment
+ # print("Combined files with assigned names:")
+#  print(combined_files)
+  
+  txi <- tximport(combined_files, type = "salmon", tx2gene = tx2gene)
+  
+  run_deseq2_analysis(txi, samples_to_test, reference_sample_name, features, prefix, use_spikeIn = use_spikeIn)
+}
+
+
+```
+
+```{r "Load Data", include=FALSE}
+#This section loads the necessary data files.
+# Load the necessary files
+tx2gene <- load_data(dm6.hg38.tx2gene_file)
+
+#Load in sample metadata
+samples <- read.csv('./samplesheet_DESeq2.csv', header = T)
+
+#path to gtf_gene_annotation_table.txt
+features <- read.table(gtf_gene_annotation_table, header =T, fill = T)
+
+# Create file paths for quant.sf files
+files <- file.path(getwd(), "salmon_quant", samples$sample, "quant.sf")
+names(files) <- samples$sample
+```
+
+##*************************##
+
+## HEADING/TITLE FOR THIS ANALYSIS HERE ##
+
+## 1hr GSK591 vs DMSO  ##
+
+```{r, "1hr GSK591 vs DMSO", warning=FALSE}
+
+test_sample_name <- "GSK591-1hr"
+reference_sample_name <- "CONTROL"
+prefix <- test_sample_name
+use_spikeIn = FALSE
+
+call_DESeq2_analysis(test_sample_name, reference_sample_name, prefix, use_spikeIn)
+
+```
+
+##*************************##
+
+
+## 3hr GSK591 vs DMSO  ##
+
+```{r, "3hr GSK591 vs DMSO", warning=FALSE}
+
+test_sample_name <- "GSK591-3hr"
+reference_sample_name <- "CONTROL"
+prefix <- test_sample_name
+use_spikeIn = FALSE
+
+call_DESeq2_analysis(test_sample_name, reference_sample_name, prefix, use_spikeIn)
+
+```
+
+##*************************##
+
+## 12hr GSK591 vs DMSO  ##
+
+```{r, "12 hr GSK591 vs DMSO", warning=FALSE}
+
+test_sample_name <- "GSK591-12hr"
+reference_sample_name <- "CONTROL"
+prefix <- test_sample_name
+use_spikeIn = FALSE
+
+call_DESeq2_analysis(test_sample_name, reference_sample_name, prefix, use_spikeIn)
+
+```
+
+
+##*************************##
+
+## 3hr GSK591 vs 1hr GSK591  ##
+
+```{r, "3hr GSK591 vs 1hr GSK591", warning=FALSE}
+
+test_sample_name <- "GSK591-3hr"
+reference_sample_name <- "GSK591-1hr"
+prefix <- test_sample_name
+use_spikeIn = FALSE
+
+call_DESeq2_analysis(test_sample_name, reference_sample_name, prefix, use_spikeIn)
+
+```
+
+
+##*************************##
+
+## 12hr GSK591 vs 3hr GSK591  ##
+
+```{r, "12hr GSK591 vs 3hr GSK591", warning=FALSE}
+
+test_sample_name <- "GSK591-12hr"
+reference_sample_name <- "GSK591-3hr"
+prefix <- test_sample_name
+use_spikeIn = FALSE
+
+call_DESeq2_analysis(test_sample_name, reference_sample_name, prefix, use_spikeIn)
+
+```
+
