@@ -1,12 +1,11 @@
 ---
-title:  "Analysis of Fractionation timecourse following GSK591 with TMT labeling; normalized using geometric mean to internal spike-in with no imputation"
+title: "Analysis of Fractionation timecourse following GSK591 with TMT labeling; normalized using geometric mean to internal spike-in with no imputation"
 author: "David Shechter (based on original script by Maxim Maron) & Jacob Roth"
-date:   "`r format(Sys.time(), '%d %B, %Y')`"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
   html_document:
     df_print: paged
 ---
-
 ```{r "setup", include=FALSE}
 #Set the WD here
 knitr::opts_knit$set(root.dir = normalizePath('C:/Users/david/OneDrive/Bioinformatics/PRMTi/2023 PRMTi Fractionation Mass Spec TMT Labeling/'))
@@ -15,7 +14,7 @@ library(DEP)
 library(SummarizedExperiment) # loads assay(), rowData(), etc. that are not in DEP
 library(dplyr)
 library(tidyverse)
-library(rio)
+#library(rio)
 library(ggplot2)
 library(ggrepel)
 #library(viridisLite)
@@ -31,7 +30,7 @@ genes_to_label <- read.csv("C:/Users/david/OneDrive/Bioinformatics/PRMTi/2023 PR
 
 ```
 
----
+***
 #Read and Normalize Data#
 
 ```{r read data}
@@ -182,7 +181,7 @@ data_se_chr <- make_se(data_chr_irs, grep("Rep", colnames(data_chr)), experiment
 #data_se_parsed <- make_se_parse(data_unique, LFQ_columns)
 ```
 
----
+***
 #Normalize and Plot Data#
 
 
@@ -199,7 +198,7 @@ plot_normalization(data_se_chr, data_norm_chr)
 
 ```
 
----
+***
 #Differential Enrichment Analysis#
 
 ```{r differential,  include=TRUE}
@@ -245,7 +244,7 @@ plot_pca(dep_chr, x = 1, y = 2, n = 200, point_size = 4)
 #              indicate = c("condition", "replicate"))
 ```
 
----
+***
 #Generate Results Tables#
 
 
@@ -390,7 +389,7 @@ for (frac in names(dfs)) {
 
 ```
 
----
+***
 #Scatter Plots for genes_to_label
 
 ```{r scatter_log2_time_sd, include = TRUE}
@@ -521,7 +520,133 @@ for (frac in names(fractions)) {
 
 
 ```
+***
+#Violin Plots for genes_to_label over time
 
+```{r plot violin over time, eval=TRUE, include=TRUE}
+
+plot_violin_permutation <- function(df_wide, gene_set, title_prefix, n_perm = 50000, seed = 42) {
+  set.seed(seed)
+
+  out_dir <- "C:/Users/david/OneDrive/Bioinformatics/PRMTi/2023 PRMTi Fractionation Mass Spec TMT Labeling/Output"
+
+  # Prepare long format
+  df_long <- df_wide %>%
+    select(name, ends_with("_diff")) %>%
+    pivot_longer(
+      cols = ends_with("_diff"),
+      names_to = "condition",
+      values_to = "log2FC"
+    ) %>%
+    mutate(
+      condition = gsub("_diff$", "", condition),
+      group     = ifelse(name %in% gene_set, "Test Set", "Non-Test Set")
+    )
+
+  # Order conditions
+  ordered_levels <- c(
+    "GSK_15_HYPO_vs_DMSO_HYPO", "GSK_90_HYPO_vs_DMSO_HYPO",
+    "GSK_180_HYPO_vs_DMSO_HYPO", "GSK_48H_HYPO_vs_DMSO_HYPO",
+    "GSK_15_NUC_vs_DMSO_NUC",   "GSK_90_NUC_vs_DMSO_NUC",
+    "GSK_180_NUC_vs_DMSO_NUC",  "GSK_48H_NUC_vs_DMSO_NUC",
+    "GSK_15_CHR_vs_DMSO_CHR",   "GSK_90_CHR_vs_DMSO_CHR",
+    "GSK_180_CHR_vs_DMSO_CHR",  "GSK_48H_CHR_vs_DMSO_CHR"
+  )
+  present_levels <- intersect(ordered_levels, unique(df_long$condition))
+  df_long$condition <- factor(df_long$condition, levels = present_levels)
+
+  # Compute permutation p-values and differences
+  results <- df_long %>%
+    group_by(condition) %>%
+    group_split()
+
+  stat_df <- lapply(results, function(subdf) {
+    if (length(unique(subdf$group)) < 2) return(NULL)
+
+    test_vals <- subdf$log2FC[subdf$group == "Test Set"]
+    non_vals  <- subdf$log2FC[subdf$group == "Non-Test Set"]
+    observed_diff <- mean(test_vals) - mean(non_vals)
+
+    combined <- subdf$log2FC
+    labels   <- subdf$group
+    n_test   <- sum(labels == "Test Set")
+
+    perm_diffs <- replicate(n_perm, {
+      shuffled <- sample(labels)
+      mean(combined[shuffled == "Test Set"]) - mean(combined[shuffled == "Non-Test Set"])
+    })
+    pval <- mean(abs(perm_diffs) >= abs(observed_diff))
+
+    tibble(
+      condition = unique(subdf$condition),
+      obs_diff  = observed_diff,
+      perm_pval = pval
+    )
+  }) %>% bind_rows()
+
+  df_long <- left_join(df_long, stat_df, by = "condition")
+
+  p <- ggplot(df_long, aes(x = condition, y = log2FC, fill = group)) +
+  # 1) Slightly wider violins; fine outline
+  geom_violin(
+    position = position_dodge(width = 0.8),
+    width    = 0.85,       # increase from 0.7 → 0.85
+    trim     = FALSE,
+    alpha    = 0.7,
+    size     = 0.2         # thin border
+  ) +
+  # 2) Thin box borders but bold median
+  geom_boxplot(
+    position      = position_dodge(width = 0.8),
+    width         = 0.17,  # you can also widen the box a bit
+    outlier.shape = NA,
+    alpha         = 0.4,
+    size          = 0.2,   # thin whiskers & box lines
+    fatten        = 2      # median line is 2× thicker than size
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black", size = 0.4) +
+  scale_fill_manual(values = c("Test Set" = "forestgreen", "Non-Test Set" = "gray70")) +
+  geom_text(
+    data = stat_df,
+    aes(
+      x     = condition,
+      y     = max(df_long$log2FC, na.rm = TRUE) + 0.2,
+      label = paste0("Δ=", round(obs_diff, 2), "\np=", signif(perm_pval, 3))
+    ),
+    inherit.aes = FALSE,
+    size = 3.8
+  ) +
+  labs(
+    title = paste("Log2 Fold Change Violin —", title_prefix),
+    x     = "Condition (Timepoints)",
+    y     = "Log2 Fold Change",
+    fill  = NULL
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x    = element_text(angle = 45, hjust = 1),
+    panel.border   = element_rect(color = "black", fill = NA),
+    legend.position = "top",
+    panel.grid.minor = element_blank() # eliminate minor grid lines
+  )
+
+print(p)
+  ggsave(
+    filename = file.path(out_dir, paste0("log2FC_violin_perm_", title_prefix, ".pdf")),
+    plot = p,
+    device = "pdf",
+    width = 5,
+    height = 6
+  )
+
+  return(stat_df)
+}
+
+stats_hypo <- plot_violin_permutation(df_wide_hypo, genes_to_label, "HYPO")
+stats_nuc  <- plot_violin_permutation(df_wide_nuc,  genes_to_label, "NUC")
+stats_chr  <- plot_violin_permutation(df_wide_chr,  genes_to_label, "CHR")
+
+```
 
 
 ```{r heatmap of specific genes, eval = FALSE}
@@ -569,7 +694,7 @@ for (frac in names(fractions)) {
   col_order <- unique(conds)  # e.g. DMSO_HYPO, GSK_15_HYPO, …
   avg_mat   <- avg_mat[, col_order, drop = FALSE]
   
-  # --- Heatmap of the averaged, log2‐centered intensities ---
+  # Heatmap of the averaged, log2‐centered intensities ---
   pheatmap(
     avg_mat,
     scale           = "none",     # already centered
