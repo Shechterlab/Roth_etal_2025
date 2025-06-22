@@ -1,0 +1,368 @@
+---
+title: "JSRe0262_IF-AnalysisOfNPAT-Puncta"
+author: "Jacob Roth"
+date: "2025-06-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Libraries}
+
+# Load necessary libraries
+library(readr)
+library(fs)
+library(stringr)
+library(purrr)
+library(dplyr)
+library(ggplot2)
+library(readxl)
+library(lubridate)
+
+date2 <- ymd(today())
+date <- format(ymd(today()), "%Y%m%d")
+
+```
+
+# NPAT puncta from IF
+
+
+```{r Read Data}
+
+
+# Define the root directory
+root_dir <- getwd()
+
+
+# Function to find and load CSV files
+load_quantification_files <- function(pattern) {
+  # Find all matching files recursively
+  file_paths <- dir_ls(root_dir, recurse = TRUE, glob = paste0("*", pattern, ".csv"))
+  
+  # Extract parent folder names in "JSRs###-##" format
+  folder_names <- str_extract(file_paths, "JSRs\\d{3}-\\d{2}")
+  
+  # Read all files into a named list of dataframes
+  data_list <- map(file_paths, read_csv)
+  names(data_list) <- folder_names
+  
+  return(data_list)
+}
+
+# Load nuclei quantifications
+list_data_NPATpuncta <- load_quantification_files("NucleusNPATCounts_20250615")
+
+
+# list_data_punctaH4 <- load_quantification_files("Quantification_puncta-H4inNPAT-Annotated")
+
+# Rename the first column in each dataframe within list_data_punctaH4
+# list_data_punctaH4 <- map(list_data_punctaH4, function(df) {
+#   colnames(df)[1] <- "Puncta"  # Rename first column to "Puncta"
+#   return(df)
+# })
+
+# Append "_H4" to all column names except "Puncta"
+# list_data_punctaH4 <- map(list_data_punctaH4, function(df) {
+#   df <- df %>%
+#     rename_with(~ ifelse(.x != "Puncta", paste0(.x, "_H4"), .x))  # Append "_H4" only to non-"Puncta" columns
+#   return(df)
+# })
+
+
+
+```
+
+
+
+```{r Form dataframes}
+# Function to combine list of dataframes into a single dataframe with "Slide" column
+combine_dataframes <- function(data_list) {
+  bind_rows(
+    map2(data_list, names(data_list), ~ mutate(.x, SlideRep = .y))
+  )
+}
+
+# Condense nuclei data
+data_NPATpuncta <- combine_dataframes(list_data_NPATpuncta)
+```
+
+
+```{r Clean dataframes}
+
+data_NPATpuncta <- data_NPATpuncta[, -1]
+# data_NPATpuncta <- data_NPATpuncta %>% select(-Area)
+
+# colnames(data_NPATpuncta)
+# # Rename multiple columns
+data_NPATpuncta <- data_NPATpuncta %>%
+  rename(
+    NucleusSize = "Nucleus Size",
+    NPATCount = "NPAT Count"
+  )
+
+# data_NPATpuncta2 <- data_nuclei %>%
+  # select(SlideRep,Nucleus,NucleusSize,NPATCount)
+
+# data_NPATpuncta2$NPATotal <- data_nuclei$Single + data_nuclei$Binucleate + data_nuclei$Multiirregular
+
+library(stringr)
+data_NPATpuncta$Slide <- str_sub(data_NPATpuncta$SlideRep, 1, 7)
+
+```
+
+
+```{r summarize data}
+# 
+# data_summary <- data_NPATpuncta %>%
+#   group_by(Slide) %>%
+#   summarise(
+#     NPATCountPerNuclei = sum(NPATCount, na.rm = TRUE),
+#     NPATmean = mean(NPATCount, na.rm = TRUE),
+#     NPATmedian = median(NPATCount, na.rm = TRUE),
+#     NucleusSize = mean(NucleusSize, na.rm = TRUE)
+#   )
+data_NPATpuncta <- data_NPATpuncta %>%
+  mutate(CountNPAT_Group = case_when(
+    NPATCount == 0 ~ "0",
+    NPATCount >= 1 & NPATCount <= 2 ~ "1-2",
+    NPATCount >= 3 ~ "3+",
+    TRUE ~ "Other"  # In case there are unexpected values
+  ))
+
+data_summary <- data_NPATpuncta %>%
+  group_by(Slide) %>%
+  # filter(NucleusSize > 50) %>%
+  summarise(
+    NPATCountPerNuclei = sum(NPATCount, na.rm = TRUE),
+    NPATmean = mean(NPATCount, na.rm = TRUE),
+    NPATmedian = median(NPATCount, na.rm = TRUE),
+    NucleusSize = mean(NucleusSize, na.rm = TRUE)
+  )
+
+
+
+
+
+```
+
+#address here
+
+```{r Read MetaData, eval = TRUE}
+
+# Define the file path
+metadata_file <- "/Users/jacobroth/Library/CloudStorage/OneDrive-Personal/RothJacob_PhDFiles/1-Projects/2-Experiments/JSRe0191-T_IF_NB05-125_p53-ImpactOnNuclearBodiesWithPRMT5i/1-notes/JSRe0191-SlideMetadata.xlsx"
+
+# Read the first sheet (change sheet name or index if needed)
+slide_metadata <- read_excel(metadata_file)
+
+# View structure of the imported metadata
+# str(slide_metadata)
+
+```
+
+```{r}
+data_NPATpuncta <- inner_join(data_NPATpuncta,slide_metadata, by = "Slide")
+data_summary <- inner_join(data_summary,slide_metadata, by = "Slide")
+
+
+```
+
+```{r Proportions}
+# Compute proportions within each TreatmentDuration
+data_NPATpuncta_prop <- data_NPATpuncta %>%
+  group_by(Treatment, CountNPAT_Group,DurationHr) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(Treatment,DurationHr) %>%
+  mutate(Proportion = n / sum(n))  # Normalize so each TreatmentDuration sums to 1
+
+```
+
+
+```{r Save Merged Data, eval = FALSE}
+
+# Define the output directory
+output_dir <- getwd()
+
+
+# Define the filename
+output_file <- file.path(output_dir, paste0("4-data_processed/NPAT-Counts_DataMerged_", date, ".csv"))
+
+# Save the dataframe as a CSV file
+write_csv(data_NPATpuncta, output_file)
+
+# Define the filename
+output_file2 <- file.path(output_dir, paste0("4-data_processed/NPAT-Counts_DataSummary_", date, ".csv"))
+
+# Save the dataframe as a CSV file
+write_csv(data_summary, output_file2)
+
+# Define the filename
+output_file3 <- file.path(output_dir, paste0("4-data_processed/NPAT-Counts_Proportions_", date, ".csv"))
+
+# Save the dataframe as a CSV file
+write_csv(data_NPATpuncta_prop, output_file3)
+
+# Define the filename
+# output_file2 <- file.path(output_dir, paste0("MergedData-NPAT_", date, ".csv"))
+
+# Save the dataframe as a CSV file
+# write_csv(data_puncta, output_file2)
+
+```
+
+# Plots
+
+```{r NPAT Puncta count barplot, eval = FALSE}
+
+#Needs updated as is plotting counts of puncta but not scaling correctly per nucleus
+
+# Load necessary libraries
+library(ggplot2)
+library(dplyr)
+library(ggpubr)
+library(forcats)
+
+
+# plotme = c("JSRs115","JSRs116","JSRs117","JSRs118")
+# plotme = c("DMSO",
+           # "GSK591-3hr",
+           # "GSK591-24hr","GSK591-96hr", "MS023-96hr")
+
+# Define the output path
+output_dir <- paste("/Users/jacobroth/Library/CloudStorage/OneDrive-Personal/RothJacob_PhDFiles/1-Projects/2-Experiments/JSRe0278-T_Cellular_NB06-000_OverExpressionOfMutantH4-Lentiviral/5-figures/20240610_Batch02",sep = "")
+
+# Define the filename
+output_file <- file.path(output_dir, paste0("NPAT-PunctaPerNucleus-Barplot_", date, ".png"))
+# Load required package
+
+
+# Compute proportions within each TreatmentDuration
+# data_nuclei_2_prop <- data_nuclei %>%
+#   group_by(TreatmentDuration, CountNPAT_Group) %>%
+#   summarise(n = n(), .groups = "drop") %>%
+#   group_by(TreatmentDuration) %>%
+#   mutate(Proportion = n / sum(n))  # Normalize so each TreatmentDuration sums to 1
+
+
+# Plot proportions within each CountNPAT_Group across TreatmentDuration
+plot <- data_NPATpuncta_prop %>% 
+  # filter(Treatment %in% plotme) %>%
+ggplot(aes(x = fct_relevel(Treatment, "GFP",
+                             "H4-wt",
+                             "H4R3A","H4R3K", "H4R3C"),
+                               y = Proportion, fill = Treatment)) +
+  geom_col() +  # Bar chart using calculated proportions
+  # facet_wrap(~ CountNPAT_Group, scales = "free_y") +  # Facet by CountNPAT_Group
+      facet_wrap(~ CountNPAT_Group, ncol = 3, nrow = 1) +  # Facet into 2 columns, 3 rows
+  scale_fill_manual(values = setNames(data_NPATpuncta$Color, data_NPATpuncta$Treatment)) +  # Custom fill colors
+  theme_minimal() +
+  labs(
+    title = "NPAT puncta counts per nucleus",
+    x = "Treatment",
+    y = "Proportion of Nuclei",
+    fill = "Treatment"
+  ) +
+  ylim(0,0.5)+
+    theme_minimal(base_size = 18) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 12,color = "black", face = "plain"),
+    # axis.text.x  = element_blank(),
+    axis.text.y = element_text(size = 16,color = "black", face = "plain"),
+    axis.title = element_text(size = 14, face = "plain"),
+    # axis.title.x  = element_blank(),
+    legend.position = "none",
+    panel.grid.major = element_blank(),  # Remove major gridlines
+    panel.grid.minor = element_blank(),  # Remove minor gridlines
+    panel.border = element_blank(),      # Remove border around plot
+    axis.line = element_line(color = "black"),  # Keep only X and Y axes
+    legend.text = element_text(color = "black", face = "plain"),  # Change legend text
+    legend.title = element_text(color = "black", face = "plain"),  # Change legend title
+    plot.title = element_text(color = "black", face = "plain"),  # Change plot title
+    plot.subtitle = element_text(color = "black", face = "plain"),  # Change subtitle
+    text = element_text(color = "black", face = "plain"),  # Set all text to black and regular
+  )
+
+
+plot
+
+# Save the plot as a PNG
+ggsave(filename = output_file, plot = plot, width = 8, height = 6, dpi = 300)
+
+
+```
+
+```{r NPAT Puncta count barplot stacked, eval = TRUE}
+
+library(ggplot2)
+library(dplyr)
+library(forcats)
+
+
+
+# plotme = c("Scram-168hr", "Hinfp-kd-1-168hr",
+#                              "Hinfp-kd-2-168hr")
+# Define the output path
+output_dir <- paste("/Users/jacobroth/Library/CloudStorage/OneDrive-Personal/RothJacob_PhDFiles/1-Projects/2-Experiments/JSRe0278-T_Cellular_NB06-000_OverExpressionOfMutantH4-Lentiviral/5-figures/20240610_Batch02",sep = "")
+
+# Define the filename
+output_file <- file.path(output_dir, paste0("NPAT-PunctaPerNucleus-BarplotStacked_", date, ".png"))
+
+
+# Create a named vector mapping TreatmentDuration2 (x-axis categories) to DurationHr (labels)
+# label_mapping <- c("NT","1","2")
+
+# level_mapping <- c("3+","1-2","0")
+
+# level_mapping <- c("0","1-2","3+")
+level_mapping <- c("3+","1-2","0")
+
+# Filter data
+plot <- data_NPATpuncta_prop %>% 
+  # filter(Treatment %in% plotme) %>%
+  mutate(CountNPAT_Group = factor(CountNPAT_Group,
+                                   levels = level_mapping)) %>%  # Reorder levels
+  ggplot(aes(x = fct_relevel(Treatment, "GFP",
+                             "H4-wt",
+                             "H4R3A","H4R3K", "H4R3C"),
+                               y = 100*Proportion, fill = CountNPAT_Group)) +
+  geom_col(position = "stack") +  # Stacked bar plot
+  # scale_fill_manual(values = setNames(nuclei_summary$Color, nuclei_summary$CountCoilin_Group2)) +  # Custom fill colors for CountCoilin_Group2
+    scale_fill_grey(start = 0.9, end = 0.3) +  # Shades of gray from dark (0.3) to light (0.9)
+  theme_minimal() +
+  labs(
+    title = "NPAT puncta per nucleus",
+    x = "Treatment",
+    y = "Percentage of Nuclei",
+    fill = "NPAT\nfoci\nper\nnucleus"
+  ) +
+  # ylim(0, 0.7) +
+  # scale_x_discrete(labels = label_mapping) +  # Change x-axis labels to DurationHr
+  theme_minimal(base_size = 24) +
+  theme(
+    axis.text.x = element_text(size = 24,
+                               angle = 45, hjust = 1, vjust = 1,
+                               color = "black", face = "plain"),
+    axis.text.y = element_text(size = 24, color = "black", face = "plain"),
+    axis.title = element_text(size = 24, face = "plain"),
+    legend.position = "right",  # Show legend for puncta group
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),  
+    panel.border = element_blank(),      
+    axis.line = element_line(color = "black", size = 1.2),  
+    legend.text = element_text(size = 24, color = "black", face = "plain"),  
+    legend.title = element_text(color = "black", face = "plain"),  
+    plot.title = element_text(size = 24, color = "black", face = "plain"),  
+    plot.subtitle = element_text(color = "black", face = "plain"),  
+    text = element_text(color = "black", face = "plain")  
+  )
+
+# Display the plot
+plot
+
+# Save the plot as a PNG
+ggsave(filename = output_file, plot = plot, width = 8, height = 6, dpi = 300)
+
+```
+
