@@ -1,0 +1,43 @@
+// Specify the main directory containing the target subfolders
+run("Fresh Start"); // Clears all images and saved data for a fresh start
+mainDir = "/Users/jacobroth/Library/CloudStorage/OneDrive-Personal/RothJacob_PhDFiles/1-Projects/2-Experiments/JSRe0250-T_IF_NB06-035_H4-Immunofluorescence-IF/4-data_processed/20250227_Batch08_16-bit/";
+
+// List the subfolders of interest
+subfolders = newArray(
+"JSRs122-04",
+"JSRs123-01",
+"JSRs124-02",
+"JSRs125-02",
+"JSRs126-06");
+
+for (i = 0; i < lengthOf(subfolders); i++) {
+    // Construct the path to the current subfolder
+    subDir = mainDir + subfolders[i] + "/";
+    fileList = getFileList(subDir);
+    
+    // Iterate through each file in the current subfolder
+    for (j = 0; j < lengthOf(fileList); j++) {
+        if (indexOf(fileList[j], "CH1") >= 0) {
+     // if (indexOf(fileList[j], "CH2") >= 0) {
+     // if (indexOf(fileList[j], "CH3") >= 0) {
+     // if (indexOf(fileList[j], "CH4") >= 0) {
+            // Open the file
+            open(subDir + fileList[j]);
+            
+            // Convert the image to 16-bit
+            run("16-bit");
+            
+            // Rename the image window using the first 7 characters of the subfolder's name
+            newName = substring(subfolders[i], 0, 10);
+            rename(newName);
+            
+            // Optional: Here you could add additional processing or saving steps
+            
+            // Optionally, close the image to free up memory if you're done processing it
+            // close();
+        }
+    }
+}
+
+// After all images have been opened, converted, and processed, tile them
+run("Tile");

@@ -1,0 +1,98 @@
+// --- Setup ---
+dir = "/Users/jacobroth/Library/CloudStorage/OneDrive-Personal/RothJacob_PhDFiles/1-Projects/2-Experiments/JSRe0250-T_IF_NB06-035_H4-Immunofluorescence-IF/4-data_processed/20250227_Batch08_16-bit/";
+
+// List the subfolders of interest
+slides = newArray(
+//"JSRs122-04",
+//"JSRs123-01",
+//"JSRs124-02",
+//"JSRs125-02",
+"JSRs126-06");
+
+// === Loop through each slide ===
+for (s = 0; s < slides.length; s++) {
+    slide = slides[s];
+    print("Processing: " + slide);
+
+    run("Fresh Start"); // Clear memory each round
+
+    targetFolder = dir + slide + "/Leveled/Cropped-0/";
+    LutDir = targetFolder + "/LUT/";
+    File.makeDirectory(LutDir); // Ensure the directory exists
+
+    // Open all images in the target folder
+    fileList = getFileList(targetFolder);
+
+    // Reset channel paths
+    channels = newArray("", "", "", "");
+
+    // Load images, apply LUTs, convert to RGB, and save
+    for (i = 0; i < fileList.length; i++) {
+        fileName = fileList[i];
+        path = targetFolder + fileName;
+
+        if (indexOf(fileName, "slice1") != -1) {
+            open(path); run("16-bit"); run("Blue"); run("RGB Color"); run("Sharpen");
+            saveAs("Tiff", LutDir + fileName); channels[0] = LutDir + fileName; close();
+        } else if (indexOf(fileName, "slice2") != -1) {
+            open(path); run("16-bit"); run("Green"); run("RGB Color"); run("Sharpen");
+            saveAs("Tiff", LutDir + fileName); channels[1] = LutDir + fileName; close();
+        } else if (indexOf(fileName, "slice3") != -1) {
+            open(path); run("16-bit"); run("Red"); run("RGB Color"); run("Sharpen");
+            saveAs("Tiff", LutDir + fileName); channels[2] = LutDir + fileName; close();
+        } else if (indexOf(fileName, "slice4") != -1) {
+            open(path); run("16-bit"); run("Magenta"); run("RGB Color"); run("Sharpen");
+            saveAs("Tiff", LutDir + fileName); channels[3] = LutDir + fileName; close();
+        }
+    }
+
+    // Merge CH1 (Blue) + CH3 (Red)
+    if (channels[2] != "" && channels[0] != "") {
+        open(channels[2]); run("RGB Color"); run("16-bit"); title1 = getTitle();
+        open(channels[0]); run("RGB Color"); run("16-bit"); title3 = getTitle();
+        run("Merge Channels...", "c1=[" + title1 + "] c3=[" + title3 + "] create");
+        rename("Merge_CH1-CH3"); run("RGB Color"); run("Flatten");
+        saveAs("Tiff", LutDir + "Merge_CH1-CH3.tif"); close();
+    }
+
+    // Merge CH1 (Blue) + CH4 (Magenta)
+    if (channels[3] != "" && channels[0] != "") {
+        open(channels[3]); run("RGB Color"); run("16-bit"); title1 = getTitle();
+        open(channels[0]); run("RGB Color"); run("16-bit"); title3 = getTitle();
+        run("Merge Channels...", "c6=[" + title1 + "] c3=[" + title3 + "] create");
+        rename("Merge_CH1-CH4"); run("RGB Color"); run("Flatten");
+        saveAs("Tiff", LutDir + "Merge_CH1-CH4.tif"); close();
+    }
+
+    // Merge CH1 (Blue) + CH2 (Green)
+    if (channels[1] != "" && channels[0] != "") {
+        open(channels[1]); run("RGB Color"); run("16-bit"); title1 = getTitle();
+        open(channels[0]); run("RGB Color"); run("16-bit"); title3 = getTitle();
+        run("Merge Channels...", "c2=[" + title1 + "] c3=[" + title3 + "] create");
+        rename("Merge_CH1-CH2"); run("RGB Color"); run("Flatten");
+        saveAs("Tiff", LutDir + "Merge_CH1-CH2.tif"); close();
+    }
+
+    // Merge CH1 + CH2 + CH4
+    if (channels[1] != "" && channels[0] != "" && channels[3] != "") {
+        open(channels[1]); run("RGB Color"); run("16-bit"); title1 = getTitle();
+        open(channels[0]); run("RGB Color"); run("16-bit"); title3 = getTitle();
+        open(channels[3]); run("RGB Color"); run("16-bit"); title4 = getTitle();
+        run("Merge Channels...", "c2=[" + title1 + "] c3=[" + title3 + "] c6=[" + title4 + "] create");
+        rename("Merge_CH1-CH2-CH4"); run("RGB Color"); run("Flatten");
+        saveAs("Tiff", LutDir + "Merge_CH1-CH2-CH4.tif"); close();
+    }
+    
+    // Merge CH2 (green) + CH4 (Magenta)
+    if (channels[3] != "" && channels[1] != "") {
+        open(channels[3]); run("RGB Color"); run("16-bit"); title1 = getTitle();
+        open(channels[1]); run("RGB Color"); run("16-bit"); title3 = getTitle();
+        run("Merge Channels...", "c6=[" + title1 + "] c2=[" + title3 + "] create");
+        rename("Merge_CH2-CH4"); run("RGB Color"); run("Flatten");
+        saveAs("Tiff", LutDir + "Merge_CH2-CH4.tif"); close();
+    }
+
+    run("Fresh Start");
+}
+
+print("All slides processed!");

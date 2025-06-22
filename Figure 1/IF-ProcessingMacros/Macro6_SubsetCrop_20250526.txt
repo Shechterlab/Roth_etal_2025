@@ -1,0 +1,189 @@
+//crop subset image from LUT but no ROI mapping onto image
+
+// --- Setup ---
+dir = "/Users/jacobroth/Library/CloudStorage/OneDrive-Personal/RothJacob_PhDFiles/1-Projects/2-Experiments/JSRe0250-T_IF_NB06-035_H4-Immunofluorescence-IF/4-data_processed/20250227_Batch08_16-bit/";
+
+slide = "JSRs122-04";
+
+// List the subfolders of interest
+// slides = newArray(
+// "JSRs122-04",
+// "JSRs123-01",
+// "JSRs124-02",
+// "JSRs125-02",
+// "JSRs126-06");
+
+run("Fresh Start");
+
+lutDir = dir + slide + "/Leveled/Cropped-0/LUT/";
+subsetDir = lutDir + "/CroppedSubset-0/";
+File.makeDirectory(subsetDir);
+
+// --- Load and stack images ---
+fileList = getFileList(lutDir);
+matchingFiles = newArray();
+
+for (i = 0; i < fileList.length; i++) {
+    if (endsWith(fileList[i], ".tif") || endsWith(fileList[i], ".tiff")) {
+        matchingFiles = Array.concat(matchingFiles, newArray(lutDir + fileList[i]));
+    }
+}
+
+print("Found " + matchingFiles.length + " matching files in " + lutDir);
+for (i = 0; i < matchingFiles.length; i++) {
+    print("  " + matchingFiles[i]);
+}
+
+if (matchingFiles.length > 0) {
+    for (i = 0; i < matchingFiles.length; i++) {
+        open(matchingFiles[i]);
+    }
+    run("Images to Stack", "use");
+} else {
+    print("No matching images found in " + lutDir);
+    exit();
+}
+
+
+// --- Set scale and square ROI ---
+run("Set Scale...", "distance=7.549 known=1 unit=µm global=false");
+getPixelSize(unit, pixelWidth, pixelHeight);
+roiSize = round(6.62 / pixelWidth);  // 60 µm square
+makeRectangle(0, 0, roiSize, roiSize);
+waitForUser("Adjust the ROI (6.62 µm square) to your desired region, then click OK to continue.");
+
+roiManager("Reset");
+roiManager("Add");
+roiManager("Save", subsetDir + "SavedROI.zip");
+
+run("Crop");
+// waitForUser("crop stack");
+
+
+// Manually define the number of slices
+slices = 8;
+
+// Loop through each slice in the stack
+for (i = 1; i <= slices; i++) {
+    setSlice(i);
+    
+    // Duplicate the current slice to ensure it's treated as a separate image
+    run("Duplicate...", "title=slice"+i);
+    
+    // Construct the title for the duplicated slice based on stack title and slice number
+    sliceTitle = getTitle();
+    
+    // Save the duplicated slice
+    saveAs("Tiff", subsetDir + sliceTitle + ".tif");
+    
+    // Close the duplicated slice to avoid clutter
+    close();
+}
+
+// Optionally, keep the original stack open or close it
+// close();
+
+
+run("Stack to Images");
+
+waitForUser("Select DAPI slice");
+
+//selectImage("Leveled-20250517_CH1-DAPI_Bright-500-5000_JSRs157-04_stack");
+run("Scale Bar...", "width=1 height=20 font=30 horizontal bold overlay");
+run("Flatten");
+saveAs("Tiff", subsetDir + "/Leveled-20250606_CH1-DAPI_1umScale.tif");
+
+// open Ch1-Ch3 to add cropping area
+
+open(lutDir + "Merge_CH1-CH4.tif");
+selectImage("Merge_CH1-CH4.tif");
+
+roiManager("Open", lutDir + "/CroppedSubset-0/SavedROI.zip");
+roiManager("Select", 0);
+// RoiManager.setGroup(0);
+// RoiManager.setPosition(0);
+roiManager("Set Color", "white");
+roiManager("Set Line Width", 2);
+roiManager("Show All");
+run("Flatten");
+saveAs("Tiff", lutDir + "/Merge_CH1-CH4_LabelCrop.tif");
+
+run("Fresh Start");
+
+open(lutDir + "Merge_CH1-CH2.tif");
+selectImage("Merge_CH1-CH2.tif");
+
+roiManager("Open", lutDir + "/CroppedSubset-0/SavedROI.zip");
+roiManager("Select", 0);
+// RoiManager.setGroup(0);
+// RoiManager.setPosition(0);
+roiManager("Set Color", "white");
+roiManager("Set Line Width", 2);
+roiManager("Show All");
+run("Flatten");
+saveAs("Tiff", lutDir + "/Merge_CH1-CH2_LabelCrop.tif");
+
+run("Fresh Start");
+
+open(lutDir + "Merge_CH1-CH2-CH4.tif");
+selectImage("Merge_CH1-CH2-CH4.tif");
+
+roiManager("Open", lutDir + "/CroppedSubset-0/SavedROI.zip");
+roiManager("Select", 0);
+// RoiManager.setGroup(0);
+// RoiManager.setPosition(0);
+roiManager("Set Color", "white");
+roiManager("Set Line Width", 2);
+roiManager("Show All");
+run("Flatten");
+saveAs("Tiff", lutDir + "/Merge_CH1-CH2-CH4_LabelCrop.tif");
+
+run("Fresh Start");
+
+
+open(lutDir + "Merge_CH2-CH4.tif");
+selectImage("Merge_CH2-CH4.tif");
+
+roiManager("Open", lutDir + "/CroppedSubset-0/SavedROI.zip");
+roiManager("Select", 0);
+// RoiManager.setGroup(0);
+// RoiManager.setPosition(0);
+roiManager("Set Color", "white");
+roiManager("Set Line Width", 2);
+roiManager("Show All");
+run("Flatten");
+saveAs("Tiff", lutDir + "/Merge_CH2-CH4_LabelCrop.tif");
+
+run("Fresh Start");
+
+// CH2 and Ch4
+open(lutDir + "slice2.tif");
+selectImage("slice2.tif");
+
+roiManager("Open", lutDir + "/CroppedSubset-0/SavedROI.zip");
+roiManager("Select", 0);
+// RoiManager.setGroup(0);
+// RoiManager.setPosition(0);
+roiManager("Set Color", "white");
+roiManager("Set Line Width", 2);
+roiManager("Show All");
+run("Flatten");
+saveAs("Tiff", lutDir + "/slice2_LabelCrop.tif");
+
+run("Fresh Start");
+
+// CH2 and Ch4
+open(lutDir + "slice4.tif");
+selectImage("slice4.tif");
+
+roiManager("Open", lutDir + "/CroppedSubset-0/SavedROI.zip");
+roiManager("Select", 0);
+// RoiManager.setGroup(0);
+// RoiManager.setPosition(0);
+roiManager("Set Color", "white");
+roiManager("Set Line Width", 2);
+roiManager("Show All");
+run("Flatten");
+saveAs("Tiff", lutDir + "/slice4_LabelCrop.tif");
+
+run("Fresh Start");

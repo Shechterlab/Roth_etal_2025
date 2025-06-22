@@ -1,0 +1,86 @@
+,run("Fresh Start"); // Clears all images and saved data for a fresh start
+// Define base directory
+dir = "/Users/jacobroth/Library/CloudStorage/OneDrive-Personal/RothJacob_PhDFiles/1-Projects/2-Experiments/JSRe0250-T_IF_NB06-035_H4-Immunofluorescence-IF/4-data_processed/20250227_Batch08_16-bit/";
+
+// List the subfolders of interest
+slides = newArray(
+"JSRs122-04",
+"JSRs123-01",
+"JSRs124-02",
+"JSRs125-02",
+"JSRs126-06");
+
+date = "20250606";
+
+// Define CH1 image path suffix
+CH1 = "Untitled_CH1.tif";
+CH2 = "Untitled_CH2.tif";
+CH3 = "Untitled_CH3.tif";
+CH4 = "Untitled_CH4.tif";
+
+run("Fresh Start"); // Removes all images and saved data
+
+
+target = "NPAT"; // DAPI, H4, Actin, NPAT
+channel = "CH4"
+Channel = CH4
+
+// Define brightness adjustment values (set these as needed)
+// Channel = CH1
+// Min = 500;  // Set the minimum brightness 500 best
+// Max = 7000; // Set the maximum brightness 7000 best
+
+// CH2
+// Channel = CH2
+// Min = 2250;  // Set the minimum brightness 2250 best
+// Max = 20000; // Set the maximum brightness 20000 best
+
+// CH3
+// Channel = CH3
+// Min = 0;  // Set the minimum brightness; 00 best
+// Max = 19595; // Set the maximum brightness; 19595 best
+
+// CH4
+// Channel = CH4
+Min = 7000;  // Set the minimum brightness 7000 best
+Max = 40000; // Set the maximum brightness 40000 best
+
+
+// Loop through slides, process CH1 images
+for (i = 0; i < lengthOf(slides); i++) {
+    imagePath = dir + slides[i] + "/" + Channel;
+    open(imagePath);
+    rename(slides[i]); // Rename for clarity
+
+    // Convert to 16-bit and adjust brightness
+    run("16-bit");
+    setMinAndMax(Min, Max);
+
+    // Convert back to RGB for final image so I can save it
+    run("RGB Color");
+
+    // Define the Leveled folder path
+    leveledFolder = dir + slides[i] + "/Leveled";
+
+    // Check if the "Leveled" folder exists, if not, create it
+    if (!File.exists(leveledFolder)) {
+        File.makeDirectory(leveledFolder);
+    }
+
+    // Construct the new filename
+    saveFilename = "Leveled/Leveled-" + date + "_" + channel + "-" + target + "_Bright-" + Min + "-" + Max + "_" + slides[i] + ".tif";
+    // saveFilename = "Leveled/Leveled-20250526_CH4-NPAT_Bright-" + Min + "-" + Max + "_" + slides[i] + ".tif";
+    savePath = dir + slides[i] + "/" + saveFilename;
+
+    // Save the processed image
+    saveAs("Tiff", savePath);
+}
+
+// Combine all images into a stack for visualization (optional)
+// run("Images to Stack", "use");
+
+// Create tiled montage
+// run("Make Montage...", "columns=3 rows=2 scale=1");
+
+
+run("Fresh Start"); // Removes all images and saved data
