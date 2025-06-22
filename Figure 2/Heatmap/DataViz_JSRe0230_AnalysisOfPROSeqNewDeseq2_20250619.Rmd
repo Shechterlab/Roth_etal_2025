@@ -1,0 +1,347 @@
+---
+title: "PRO-SeqHeatmap"
+author: "Jacob Roth"
+date: "2025-06-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Libraries}
+library(readxl)
+library(tidyverse)
+library(dplyr)
+
+
+
+date_2 <- ymd(today())
+date <- format(ymd(today()), "%Y%m%d")
+
+```
+
+
+
+# Data Collection
+New analyses 20241120
+
+```{r Read all ProSeq data, eval = TRUE}
+#$ at the end indicates the end of the text of interest
+# setwd('~/OneDrive/RothJacob_PhDFiles/1-Projects/2-Experiments/JSRe0065-T_Programming_NB03-aaa_MM-Pro-Seq/4-data_processed/deseq2')
+
+# setwd('~/EinsteinMed Dropbox/Jacob Roth/RothJacob_PhDFiles-Dropbox/PRO-seq/DESeq2-nfcore-featurecounts')
+setwd('~/Downloads')
+
+data_ProSeq15 <- 
+  read.csv("GSK591.15min_vs_CONTROL_proSeq-genes_DESeq2.csv", 
+             header = TRUE, 
+             sep = ",", 
+             stringsAsFactors = FALSE)
+
+data_ProSeq15$IncubationHour <- "0.25"
+data_ProSeq15$treatment <- "GSK591.15min_vs_CONTROL"
+
+data_ProSeq3 <- 
+  read.csv("GSK591.3hr_vs_CONTROL_proSeq-genes_DESeq2.csv", 
+             header = TRUE, 
+             sep = ",", 
+             stringsAsFactors = FALSE)
+
+data_ProSeq3$IncubationHour <- "3"
+data_ProSeq3$treatment <- "GSK591.3hr_vs_CONTROL"
+
+```
+
+
+```{r Clean Names, eval = TRUE}
+
+#shorten name of each file to only reference the parent dataset
+# files_ProSeq <- gsub("4-data_processed/deseq2/", "", list_ProSeq)
+
+df_ProSeq <- bind_rows(data_ProSeq3,data_ProSeq15)
+
+# df_ProSeq <- df_ProSeq %>%
+#   filter(pvalue < 0.05)
+names(df_ProSeq)[names(df_ProSeq) == 'gene_type'] <- 'Class'
+names(df_ProSeq)[names(df_ProSeq) == 'gene_name'] <- 'GeneSymbol'
+
+
+```
+
+
+```{r Get name metadata}
+metadata_names <- read_excel("2-data_raw/Metadata_Names.xlsx"
+                             # sheet = sheet_name, skip = 1
+                             )
+metadata_names <- na.omit(metadata_names)
+
+df_ProSeq <- left_join(df_ProSeq,
+          metadata_names,
+          by = "treatment")
+```
+
+Histone nomenclature from Seal et al: A standardized nomenclature for mammalian histone genes
+DOI:10.1186/s13072-022-00467-2
+
+```{r Read Histone data}
+
+setwd('~/OneDrive/RothJacob_PhDFiles/1-Projects/2-Experiments/JSRe0115-T_na_NB03-194_LearningAboutHistonesAndHistoneLocusBodies')
+
+df_histones <- read.csv("2-data_raw/Seal-2022_HistoneNames/13072_2022_467_MOESM2_ESM copy.csv")
+# length(unique(seal_histones$gene_id))
+
+# seal_histones <- seal_histones %>%
+#   dplyr::select(c("Histone_type","Histone_variant","HGNC_Symbol","gene_id")) %>%
+#   unique()
+
+# Additions in PRO-seq but not in the seal dataset "previous symbol"
+# HIST1H2AC
+# HISTIHAH
+# HIST4H4
+
+df_histones$HGNCsymbol <- df_histones$HGNC.symbol
+
+df_histonesMerge <- df_histones %>% select("Histone.type",
+                                      "Histone.variant",
+                                      "HGNC.symbol",
+                                      "PreviousSymbol",
+                                      "HGNCsymbol")
+
+```
+
+# Create master list from Pro-Seq uniques
+
+```{r unique names}
+
+# Extract unique values from the "GeneName" column
+unique_transcript_names <- unique(df_ProSeq$GeneName)
+
+# Create a dataframe with one column for the unique GeneName
+df_GeneNames <- data.frame(GeneName = unique_transcript_names, stringsAsFactors = FALSE)
+
+# Sort the dataframe alphabetically by the GeneName column
+df_GeneNames <- df_GeneNames[order(df_GeneNames$GeneName), , drop = FALSE]
+
+#remove blanks
+df_GeneNames <- subset(df_GeneNames, GeneName != "")
+
+```
+
+
+```{r Append histones}
+# Add the new columns for histones
+
+
+df_GeneNames <- df_GeneNames %>%
+  mutate(histone = ifelse(GeneName %in% df_histonesMerge$HGNCsymbol, "yes", "no"))
+
+df_GeneNames <- df_GeneNames %>%
+  left_join(df_histonesMerge, by = c("GeneName" = "HGNC.symbol")) %>%
+  mutate(GeneName2 = ifelse(!is.na(HGNCsymbol), HGNCsymbol, GeneName)) %>%
+  unique()
+  # select(-HGNC.symbol) # Optional: to remove the joined column if not needed
+
+
+
+```
+
+
+```{r Merge Annotations to ProSeq_df}
+
+#add annotations
+df_ProSeq <- merge(df_ProSeq, df_GeneNames, 
+                   by.x = "GeneName", 
+                   by.y = "GeneName", 
+                   all.x = TRUE)
+
+  
+```
+
+
+# Heatmaps
+
+
+
+
+# 20241212 Histone Heatmap for WIP with ChatGPT
+
+this worked to make the final SAC figures
+
+```{r Heatmap for Manuscript, fig.height=10, fig.width=7}
+# Load necessary libraries
+library(ComplexHeatmap)
+library(dplyr)
+
+# Assuming your dataset is named 'df'
+# Filter dataset for 'GSK591' in treatment_names2 and not 'DEX'
+# filtered_df <- df_ProSeq %>%
+#   filter(histone == "yes") %>%
+#   filter(pvalue < 0.05)
+
+filtered_df <- df_ProSeq %>%
+  filter(histone == "yes") %>%
+  group_by(GeneName) %>%  # or use the column name that uniquely identifies each histone gene
+  filter(any(pvalue < 0.05)) %>%
+  ungroup()
+
+
+# %>% # Aggregate the log2FoldChange values to ensure unique combinations
+#   # filter(padj < 0.05) %>%
+#   # filter(pvalue < 0.05) %>%
+#   # filter(GeneName != "CENPA")%>%
+#   filter(GeneName != "MACROH2A1")
+
+aggregated_df <- filtered_df %>%
+  group_by(GeneName, treatment_names2) %>%
+  summarize(log2FoldChange = mean(log2FoldChange, na.rm = TRUE), .groups = 'drop')
+
+# Sample data creation (replace this with your actual dataframe)
+# df <- data.frame(
+#   GeneName = c("Gene1", "Gene2", "Gene3", "Gene4"),
+#   treatment_names2 = c("Treatment1", "Treatment2", "Treatment1", "Treatment2"),
+#   log2FoldChange = c(1.5, -2.3, 0.5, -1.2)
+# )
+
+# Pivot data to create a matrix for heatmap
+heatmap_data <- aggregated_df %>%
+  tidyr::pivot_wider(
+    names_from = treatment_names2,
+    values_from = log2FoldChange,
+    values_fill = NA
+  ) %>%
+  as.data.frame()
+
+# Set GeneName as row names
+rownames(heatmap_data) <- heatmap_data$GeneName
+heatmap_data <- heatmap_data[,-1]  # Remove the GeneName column after setting row names
+
+# Convert to matrix for ComplexHeatmap
+heatmap_matrix <- as.matrix(heatmap_data)
+
+# Impute NA values with 0
+heatmap_matrix[is.na(heatmap_matrix)] <- 0
+
+
+
+
+# Define your desired column order as a list
+desired_order <- c("GSK591_15min", "GSK591_3hr")  # Replace with your actual order
+
+# Reorder the columns of the matrix based on the desired order
+heatmap_matrix <- heatmap_matrix[, desired_order, drop = FALSE]
+
+# Reverse the order of the columns
+# heatmap_matrix <- heatmap_matrix[, rev(colnames(heatmap_matrix))]
+
+# File path
+file_path <- "5-figures/Heatmap_AllHistones-IncludeIfOnlyOnepval_20250619.pdf"
+pdf(file_path
+    # , width = 3, height = 10
+    )  # Adjust width and height as needed
+
+# File path
+# file_path <- "5-figures/Heatmap_AllHistones-padj_20241212.png"
+# Save the heatmap as a PNG
+# png(file_path, width = 600, height = 900, res = 300)  # Adjust dimensions and resolution as needed
+# Generate the heatmap without clustering and reversed column order
+Heatmap(
+  heatmap_matrix,
+  name = "log2FC",                         # Legend title
+  col = circlize::colorRamp2(c(-1, 0, 1), c("blue", "white", "orange")),  # Color scale
+  cluster_rows = TRUE,                   # Disable row clustering
+  cluster_columns = FALSE,                # Disable column clustering
+  show_row_names = TRUE,                  # Show gene names
+  show_column_names = FALSE,               # Show treatment names
+  row_names_gp = gpar(fontsize = 9),      # Increase row label font size (adjust 10 as needed),
+  width = unit(ncol(heatmap_matrix) * 9, "mm"),   # set box width (adjust 5 mm per column)
+  height = unit(nrow(heatmap_matrix) * 3, "mm"),   # set box height (adjust as needed)
+  row_dend_width = unit(12, "mm"),  # 🔧 expand dendrogram width (default is small)
+              show_heatmap_legend = FALSE
+)
+dev.off()
+
+
+```
+
+Add column annotation
+```{r Heatmap for Manuscript with type, fig.height=10, fig.width=7}
+library(ComplexHeatmap)
+library(circlize)
+library(dplyr)
+library(tidyr)
+
+# Filter and summarize data
+filtered_df <- df_ProSeq %>%
+  filter(histone == "yes") %>%
+  group_by(GeneName) %>%
+  filter(any(pvalue < 0.05)) %>%
+  ungroup()
+
+aggregated_df <- filtered_df %>%
+  group_by(GeneName, treatment_names2) %>%
+  summarize(log2FoldChange = mean(log2FoldChange, na.rm = TRUE), .groups = 'drop')
+
+# Pivot for heatmap
+heatmap_data <- aggregated_df %>%
+  pivot_wider(names_from = treatment_names2, values_from = log2FoldChange, values_fill = NA) %>%
+  as.data.frame()
+rownames(heatmap_data) <- heatmap_data$GeneName
+heatmap_data <- heatmap_data[, -1]
+heatmap_matrix <- as.matrix(heatmap_data)
+heatmap_matrix[is.na(heatmap_matrix)] <- 0
+
+# Ensure correct column order
+desired_order <- c("GSK591_15min", "GSK591_3hr")
+heatmap_matrix <- heatmap_matrix[, desired_order, drop = FALSE]
+
+# Prepare annotation dataframe
+annot_df <- filtered_df %>%
+  select(GeneName, Histone.type) %>%
+  distinct() %>%
+  filter(GeneName %in% rownames(heatmap_matrix)) %>%
+  arrange(factor(GeneName, levels = rownames(heatmap_matrix)))
+
+# Create grayscale mapping for Histone.type
+unique_types <- unique(annot_df$Histone.type)
+gray_colors <- gray.colors(length(unique_types), start = 0.3, end = 0.9)
+names(gray_colors) <- unique_types
+
+# Create row annotation
+# Create row annotation with white borders around boxes
+row_ha <- rowAnnotation(
+  HistoneType = anno_simple(
+    annot_df$Histone.type,
+    col = gray_colors,
+    gp = gpar(col = "white")  # This sets the border color to white
+  ),
+  show_annotation_name = TRUE,
+  annotation_name_gp = gpar(fontsize = 9),
+  annotation_width = unit(6, "mm")
+)
+
+
+# Save to PDF
+pdf("5-figures/Heatmap_AllHistones-IncludeIfOnlyOnepval-ColAnnoLegend_20250619.pdf")
+
+# Generate heatmap
+Heatmap(
+  heatmap_matrix,
+  name = "log2FC",
+  col = colorRamp2(c(-1, 0, 1), c("blue", "white", "orange")),
+  cluster_rows = TRUE,
+  cluster_columns = FALSE,
+  show_row_names = TRUE,
+  show_column_names = FALSE,
+  row_names_gp = gpar(fontsize = 9),
+  width = unit(ncol(heatmap_matrix) * 9, "mm"),
+  height = unit(nrow(heatmap_matrix) * 3, "mm"),
+  row_dend_width = unit(12, "mm"),
+  show_heatmap_legend = TRUE,
+  right_annotation = row_ha
+)
+
+dev.off()
+
+
+```
