@@ -1,0 +1,173 @@
+// This correctly identifies nuclei, saves a roi.zip, saves an image with the binary nuclei, and saves a csv with measurements
+// 20250221 1837
+
+dir = "/Users/jacobroth/Library/CloudStorage/OneDrive-Personal/RothJacob_PhDFiles/1-Projects/2-Experiments/JSRe0250-T_IF_NB06-035_H4-Immunofluorescence-IF/4-data_processed/";
+
+slide = "JSRs122"
+rep = "-03"
+
+BatchSlide = "20250227_Batch08/" + slide + rep + "/"
+
+CH1 = "Untitled_CH1"
+CH2 = "Untitled_CH2"
+CH3 = "Untitled_CH3"
+CH4 = "Untitled_CH4"
+
+run("Fresh Start"); // Removes all images and saved data
+
+// Open the DAPI image (Original)
+open(dir + BatchSlide + CH1 + ".tif");
+rename("DAPI");
+
+// Duplicate the original image for segmentation
+selectWindow("DAPI");
+run("RGB Color");
+run("16-bit");
+run("Set Scale...", "distance=7.549 known=1 unit=um");
+saveAs("Tiff", dir + BatchSlide + "CH1_JSRs122-03.tif");
+
+run("Duplicate...", "title=DAPI_Mask");
+
+// Process the duplicated image to create a binary mask
+selectWindow("DAPI_Mask");
+run("16-bit");
+run("Auto Threshold", "method=RenyiEntropy dark");
+run("Convert to Mask");
+run("Fill Holes");
+run("Watershed");
+
+
+// Analyze the binary mask image to extract nuclei ROIs
+run("Set Scale...", "distance=7.549 known=1 unit=um");
+run("Set Measurements...", "area mean min max centroid perimeter bounding fit shape integrated display redirect=DAPI_Mask decimal=3");
+run("Analyze Particles...", "size=0.5-Infinity exclude on-edges show=Outlines display clear include add");
+
+// Save the processed DAPI_Mask image
+roiManager("Show All");
+roiManager("Draw");
+saveAs("Tiff", dir + BatchSlide + "Overlay_DAPI.tif");
+// Save the ROI Manager contents for future reference
+roiManager("Save", dir + BatchSlide + "rois_nuclei.zip");
+
+
+// Save the results to a CSV file
+saveAs("Results", dir + BatchSlide + "Quantification_Nuclei.csv");
+// close("Results");
+
+
+run("Fresh Start"); // Removes all images and saved data
+
+  // Open the NPAT image
+open(dir + BatchSlide + CH4 + ".tif");
+rename("NPAT");
+run("Set Scale...", "distance=7.549 known=1 unit=um");
+    // Process NPAT image to identify puncta
+    selectWindow("NPAT");
+    run("Duplicate...", "title=NPAT_Mask");
+    
+    selectWindow("NPAT_Mask");
+    run("RGB Color");
+    run("16-bit");
+    setAutoThreshold("MaxEntropy dark no-reset"); // or Yen
+    run("Convert to Mask");
+    //run("Fill Holes");
+        run("Set Measurements...", "area mean min centroid perimeter bounding fit shape integrated display redirect=NPAT decimal=5");
+    run("Analyze Particles...", "size=0.0010-Infinity circularity=0.3-1.00 show=Outlines display clear include add");
+	
+	
+// Save the processed NPAT_Mask image
+roiManager("Show All");
+roiManager("Draw");
+saveAs("Tiff", dir + BatchSlide + "Overlay_NPAT.tif");
+// Save the ROI Manager contents for future reference
+roiManager("Save", dir + BatchSlide + "rois_puncta-NPAT.zip");
+
+
+// Save the results to a CSV file
+saveAs("Results", dir + BatchSlide + "Quantification_puncta-NPAT.csv");
+close("Results");
+
+
+run("Fresh Start"); // Removes all images and saved data
+
+// Load the H4 image (CH2)
+    open(dir + BatchSlide + CH2 + ".tif");
+rename("H4_RGB");
+	run("RGB Color");
+	run("16-bit");
+rename("H4");
+
+// Load NPAT puncta ROIs
+    roiManager("Reset");
+    roiManager("Open", dir + BatchSlide + "rois_puncta-NPAT.zip");
+    nPuncta = roiManager("Count");
+
+selectWindow("H4");
+    // Set image scale
+run("Set Scale...", "distance=7.549 known=1 unit=um");
+    // Set measurement parameters to quantify H4 intensity
+    run("Set Measurements...", "area mean min max integrated display redirect=H4 decimal=5");
+
+    // Measure intensity of H4 within NPAT puncta ROIs
+    roiManager("Select All");
+    roiManager("Measure");
+
+    // Save the results with a column denoting which NPAT puncta the data came from
+    saveAs("Results", dir + BatchSlide + "Quantification_puncta-H4inNPAT.csv");
+    close("Results");
+    
+
+
+// Overlay NPAT puncta onto the DAPI image
+open(dir + BatchSlide + "Overlay_DAPI.tif");
+selectWindow("Overlay_DAPI.tif");
+open(dir + BatchSlide + "Overlay_NPAT.tif");
+selectWindow("Overlay_DAPI.tif");
+selectWindow("Overlay_DAPI.tif");
+run("Add Image...", "image=Overlay_NPAT.tif x=0 y=0 opacity=50");
+run("Flatten");
+saveAs("Tiff", dir + BatchSlide + "Overlay_DAPI-NPAT.tif");
+
+
+run("Fresh Start"); // Removes all images and saved data
+
+// Open the overlay
+open(dir + BatchSlide + "Overlay_DAPI-NPAT.tif");    
+
+// Open the DAPI image (Original)
+open(dir + BatchSlide + CH1 + ".tif");
+rename("DAPI_RGB");
+
+// Duplicate the original image for segmentation
+selectWindow("DAPI_RGB");
+run("RGB Color");
+run("16-bit");
+
+// Duplicate the 16-bit version to preserve it
+selectWindow("DAPI_RGB");
+rename("DAPI_16bit");
+
+// Close the original RGB DAPI image
+close();
+
+ // Open the NPAT image
+open(dir + BatchSlide + CH4 + ".tif");
+rename("NPAT");
+run("RGB Color");
+run("16-bit");
+
+// Open the NPAT image
+open(dir + BatchSlide + CH2 + ".tif");
+rename("H4");
+run("RGB Color");
+run("16-bit");
+
+// Open the NPAT image
+open(dir + BatchSlide + CH3 + ".tif");
+rename("Actin");
+run("RGB Color");
+run("16-bit");
+
+run("Images to Stack", "use");
+
+// run("Tile");
