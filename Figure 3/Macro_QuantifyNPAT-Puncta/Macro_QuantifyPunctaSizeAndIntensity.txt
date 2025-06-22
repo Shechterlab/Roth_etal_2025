@@ -1,0 +1,84 @@
+// 20250615: Looped macro over multiple slides
+dir = "//Users/jacobroth/Library/CloudStorage/OneDrive-Personal/RothJacob_PhDFiles/1-Projects/2-Experiments/JSRe0191-T_IF_NB05-125_p53-ImpactOnNuclearBodiesWithPRMT5i/4-data_processed/";
+date = "20250619";
+Batch = "20241224_Batch01_p53-Kndn_24-bit/";
+
+// Define list of slides to loop over
+slides = newArray(
+//"JSRs067_Stitch_01"
+"JSRs092-02",
+"JSRs092-03",
+"JSRs093-01",
+"JSRs094-01",
+"JSRs095-01",
+"JSRs096-01",
+"JSRs097-02"
+//"JSRs097-03"
+); // 🔁 Add more as needed
+
+
+folder = "NPAT-Measure/";
+
+
+for (i = 0; i < slides.length; i++) {
+  slide = slides[i];
+  BatchSlide = "20241224_Batch01_p53-Kndn_24-bit/" + slide + "/";
+  saveDir = dir + BatchSlide + folder;
+  File.makeDirectory(saveDir);
+
+  CH1 = "FF-Stitched_DAPI_CH1";
+  CH2 = "Untitled_CH2";
+  CH3 = "Untitled_CH3";
+  CH4 = "FF-Stitched_NPAT_CH4";
+
+  run("Fresh Start");
+
+  // --- DAPI (CH1) nuclei segmentation ---
+  open(dir + BatchSlide + CH1 + ".tif");
+  rename("DAPI");
+  run("16-bit");
+  run("Set Scale...", "distance=7.549 known=1 unit=um");
+  saveAs("Tiff", saveDir + "CH1_image.tif");
+
+  run("Duplicate...", "title=DAPI_Mask");
+  selectWindow("DAPI_Mask");
+  run("Auto Threshold", "method=Otsu dark");
+  run("Convert to Mask");
+  run("Fill Holes");
+  run("Watershed");
+
+  run("Set Scale...", "distance=7.549 known=1 unit=um");
+  run("Set Measurements...", "area mean min max centroid perimeter bounding fit shape integrated display redirect=DAPI_Mask decimal=3");
+  run("Analyze Particles...", "size=5-1000 exclude on-edges show=Outlines display clear include add");
+
+  roiManager("Show All");
+  roiManager("Draw");
+  saveAs("Tiff", saveDir + "Overlay_DAPI.tif");
+  roiManager("Save", dir + saveDir + "rois_nuclei.zip");
+  saveAs("Results", saveDir + "Quantification_Nuclei.csv");
+
+  run("Fresh Start");
+
+  // --- NPAT (CH4) puncta segmentation ---
+  open(dir + BatchSlide + CH4 + ".tif");
+  rename("NPAT");
+  run("Set Scale...", "distance=7.549 known=1 unit=um");
+  run("Duplicate...", "title=NPAT_Mask");
+  selectWindow("NPAT_Mask");
+  run("RGB Color");
+  run("16-bit");
+  setAutoThreshold("MaxEntropy dark no-reset");
+  run("Convert to Mask");
+
+  run("Set Measurements...", "area mean min centroid perimeter bounding fit shape integrated display redirect=NPAT decimal=5");
+  run("Analyze Particles...", "size=0.0001-5 circularity=0.3-1.00 show=Outlines display clear include add");
+
+  roiManager("Show All");
+  roiManager("Draw");
+  saveAs("Tiff", saveDir + "Overlay_NPAT.tif");
+  roiManager("Save", saveDir + "rois_puncta-NPAT.zip");
+  saveAs("Results", saveDir + "Quantification_puncta-NPAT.csv");
+
+}
+
+run("Fresh Start");
