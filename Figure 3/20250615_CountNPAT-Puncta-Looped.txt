@@ -1,0 +1,93 @@
+// 20250615: Looped macro over multiple slides
+dir = "/Users/jacobroth/Library/CloudStorage/OneDrive-Personal/RothJacob_PhDFiles/1-Projects/2-Experiments/JSRe0270-T_Cellular_NB06-079_CRISPRi-RepeatsForManuscript/4-data_processed/;
+date = "20250615";
+Batch = "20250515_Batch01/";
+
+// Define list of slides to loop over
+slides = newArray(
+"JSRs153-02",
+"JSRs154-04",
+"JSRs154-05",
+"JSRs155-01",
+"JSRs155-03",
+"JSRs156-02",
+"JSRs157-02",
+"JSRs157-05",
+"JSRs158-01",
+"JSRs158-05",
+); // 🔁 Add more as needed
+
+// Define channels
+CH1 = "/Untitled_CH1";
+CH2 = "/Untitled_CH2";
+CH3 = "/Untitled_CH3";
+CH4 = "/Untitled_CH4";
+
+for (s = 0; s < slides.length; s++) {
+    Slide = slides[s];
+    folder = "/NPATQuant";
+    saveDir = dir + Batch + Slide + folder;
+    File.makeDirectory(saveDir);
+
+    run("Fresh Start");
+
+    // --- DAPI Processing ---
+    open(dir + Batch + Slide + CH1 + ".tif");
+    rename(CH1);
+    rename("DAPI");
+    run("16-bit");
+    setAutoThreshold("Otsu dark no-reset");
+    run("Convert to Mask");
+    run("Fill Holes");
+    run("Watershed");
+
+    run("Set Measurements...", "area redirect=None decimal=3");
+    run("Set Scale...", "distance=7.549 known=1 unit=um");
+    run("Analyze Particles...", "size=50-500 circularity=0.00-1.00 exclude on-edges show=Outlines display exclude add");
+
+    selectImage("DAPI");
+    roiManager("Show All");
+    roiManager("Draw");
+    saveAs("Tiff", saveDir + "/Overlay_DAPI.tif");
+    roiManager("Save", saveDir + "/rois_nuclei.zip");
+
+    initialROICount = roiManager("count");
+    nucleusSizes = newArray(initialROICount);
+    for (j = 0; j < initialROICount; j++) {
+        nucleusSizes[j] = getResult("Area", j);
+    }
+
+    run("Clear Results");
+
+    // --- NPAT Channel ---
+    open(dir + Batch + Slide + CH4 + ".tif");
+    rename(CH4);
+    run("16-bit");
+    setAutoThreshold("RenyiEntropy dark no-reset");
+    run("Convert to Mask");
+    run("Fill Holes");
+
+    NPATCounts = newArray(initialROICount);
+
+    for (i = 0; i < initialROICount; i++) {
+        roiManager("Select", i);
+        run("Set Scale...", "distance=7.549 known=1 unit=um");
+        run("Analyze Particles...", "size=0.0005-Infinity circularity=0.00-1.00 show=Nothing clear");
+        NPATCounts[i] = nResults;
+    }
+
+    for (i = 0; i < initialROICount; i++) {
+        setResult("Nucleus", i, i + 1);
+        setResult("Nucleus Size", i, nucleusSizes[i]);
+        setResult("NPAT Count", i, NPATCounts[i]);
+        updateResults();
+    }
+
+    saveAs("Results", saveDir + "/NucleusNPATCounts_" + date + ".csv");
+    saveAs("Tiff", saveDir + "/Overlay_NPAT.tif");
+
+    // Clear before moving to next slide
+    run("Close All");
+    roiManager("Reset");
+    run("Clear Results");
+}

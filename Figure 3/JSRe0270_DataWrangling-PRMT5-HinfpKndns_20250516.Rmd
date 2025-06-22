@@ -1,0 +1,292 @@
+---
+title: "JSRe0270_IF-AnalysisOfNuclearMorphology"
+author: "Jacob Roth"
+date: "2025-04-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Libraries}
+
+# Load necessary libraries
+library(readr)
+library(fs)
+library(stringr)
+library(purrr)
+library(dplyr)
+library(ggplot2)
+library(readxl)
+
+date2 <- ymd(today())
+date <- format(ymd(today()), "%Y%m%d")
+
+```
+
+# Nuclear morphology from IF
+
+Cell counter plug-in in FIJI
+[https://imagej.net/ij/plugins/cell-counter.html]
+
+1. Single (single of any appropriate size for nucleus)
+2. Binucleate (mitosis)
+3. Multi-Irregular (blebbed or multi-nucleate)
+
+```{r Read Data}
+
+
+# Define the root directory
+root_dir <- "/Users/jacobroth/Library/CloudStorage/OneDrive-Personal/RothJacob_PhDFiles/1-Projects/2-Experiments/JSRe0270-T_Cellular_NB06-079_CRISPRi-RepeatsForManuscript/4-data_processed/20250515_Batch01"
+
+
+# Function to find and load CSV files
+load_quantification_files <- function(pattern) {
+  # Find all matching files recursively
+  file_paths <- dir_ls(root_dir, recurse = TRUE, glob = paste0("*", pattern, ".csv"))
+  
+  # Extract parent folder names in "JSRs###-##" format
+  folder_names <- str_extract(file_paths, "JSRs\\d{3}-\\d{2}")
+  
+  # Read all files into a named list of dataframes
+  data_list <- map(file_paths, read_csv)
+  names(data_list) <- folder_names
+  
+  return(data_list)
+}
+
+# Load nuclei quantifications
+list_data_nuclei <- load_quantification_files("NucleiCountResults")
+
+
+# list_data_punctaH4 <- load_quantification_files("Quantification_puncta-H4inNPAT-Annotated")
+
+# Rename the first column in each dataframe within list_data_punctaH4
+# list_data_punctaH4 <- map(list_data_punctaH4, function(df) {
+#   colnames(df)[1] <- "Puncta"  # Rename first column to "Puncta"
+#   return(df)
+# })
+
+# Append "_H4" to all column names except "Puncta"
+# list_data_punctaH4 <- map(list_data_punctaH4, function(df) {
+#   df <- df %>%
+#     rename_with(~ ifelse(.x != "Puncta", paste0(.x, "_H4"), .x))  # Append "_H4" only to non-"Puncta" columns
+#   return(df)
+# })
+
+
+
+```
+
+
+
+```{r Form dataframes}
+# Function to combine list of dataframes into a single dataframe with "Slide" column
+combine_dataframes <- function(data_list) {
+  bind_rows(
+    map2(data_list, names(data_list), ~ mutate(.x, SlideRep = .y))
+  )
+}
+
+# Condense nuclei data
+data_nuclei <- combine_dataframes(list_data_nuclei)
+```
+
+
+```{r Clean dataframes}
+
+data_nuclei <- data_nuclei %>%
+  filter(Slice == "Total")
+
+# Rename multiple columns
+data_nuclei <- data_nuclei %>%
+  rename(
+    Single = "Type 1",
+    Binucleate = "Type 2",
+    Multiirregular = "Type 3"
+  )
+
+data_nuclei <- data_nuclei %>%
+  select(SlideRep,Single,Binucleate,Multiirregular)
+
+data_nuclei$total <- data_nuclei$Single + data_nuclei$Binucleate + data_nuclei$Multiirregular
+
+library(stringr)
+data_nuclei$Slide <- str_sub(data_nuclei$SlideRep, 1, 7)
+
+```
+
+
+```{r summarize data}
+
+data_summary <- data_nuclei %>%
+  group_by(Slide) %>%
+  summarise(
+    Single_sum = sum(Single, na.rm = TRUE),
+    Binucleate_sum = sum(Binucleate, na.rm = TRUE),
+    Multiirregular_sum = sum(Multiirregular, na.rm = TRUE),
+    total_sum = sum(total, na.rm = TRUE)
+  ) %>%
+  mutate(
+    prop_Single = 100*(Single_sum / total_sum),
+    prop_Binucleate = 100*(Binucleate_sum / total_sum),
+    prop_Multiirregular = 100*(Multiirregular_sum / total_sum)
+  )
+
+```
+
+
+```{r Read MetaData, eval = TRUE}
+
+# Define the file path
+metadata_file <- "/Users/jacobroth/Library/CloudStorage/OneDrive-Personal/RothJacob_PhDFiles/1-Projects/2-Experiments/JSRe0191-T_IF_NB05-125_p53-ImpactOnNuclearBodiesWithPRMT5i/1-notes/JSRe0191-SlideMetadata.xlsx"
+
+# Read the first sheet (change sheet name or index if needed)
+slide_metadata <- read_excel(metadata_file)
+
+# View structure of the imported metadata
+# str(slide_metadata)
+
+```
+
+```{r}
+data_summary <- inner_join(slide_metadata, data_summary, by = "Slide")
+
+```
+
+
+```{r Save Merged Data, eval = FALSE}
+
+# Define the output directory
+output_dir <- root_dir
+
+
+# Define the filename
+output_file <- file.path(output_dir, paste0("NuclearMorphology_DataMerged_", date, ".csv"))
+
+# Save the dataframe as a CSV file
+write_csv(data_nuclei, output_file)
+
+# Define the filename
+output_file2 <- file.path(output_dir, paste0("NuclearMorphology_DataSummary_", date, ".csv"))
+
+# Save the dataframe as a CSV file
+write_csv(data_summary, output_file2)
+
+# Define the filename
+# output_file2 <- file.path(output_dir, paste0("MergedData-NPAT_", date, ".csv"))
+
+# Save the dataframe as a CSV file
+# write_csv(data_puncta, output_file2)
+
+```
+
+
+```{r pivot for plot}
+
+
+data_summary_long <- data_summary %>%
+  pivot_longer(
+    cols = starts_with("prop_"),         # Pivot all proportion columns
+    names_to = "Morphology",             # New column for morphology type
+    values_to = "proportion"             # New column for values
+  ) %>%
+  mutate(
+    Morphology = sub("prop_", "", Morphology)  # Clean up the names
+  )
+
+
+# treatments <- unique(data_summary$Treatment)
+# treatment_string <- paste0('"', treatments, '"', collapse = ", ")
+# cat(treatment_string)
+```
+
+
+```{r NPAT Puncta count barplot stacked, eval = TRUE}
+
+library(ggplot2)
+library(dplyr)
+library(forcats)
+
+
+# 
+# plotme = c("Scram-168hr", "Hinfp-kd-1-168hr",
+#                              "Hinfp-kd-2-168hr")
+
+# Define the output path
+# output_dir <- paste("/Users/jacobroth/Library/CloudStorage/OneDrive-Personal/RothJacob_PhDFiles/1-Projects/2-Experiments/JSRe0191-T_IF_NB05-125_p53-ImpactOnNuclearBodiesWithPRMT5i/5-figures/20250127_Batch01_Hinfp-Kndn_16-bit",sep = "")
+
+# Define the filename
+
+# output_file <- file.path(output_dir, paste0("NuclearMorphologyFromIF_", date, ".png"))
+output_file <- paste0("NuclearMorphologyFromIF_", date, ".png")
+
+
+# Create a named vector mapping TreatmentDuration2 (x-axis categories) to DurationHr (labels)
+label_mapping <- c("NT","NT","1","1","2","2")
+
+# level_mapping <- c("3+","1-2","0")
+
+# level_mapping <- c("Single",
+#                    "Bi-nucleate",
+#                    "Multi-irregular")
+level_mapping <- c("Single",
+                   "Binucleate",
+                   "Multinucleate")
+
+# Filter data
+plot <- data_summary_long %>% 
+  # filter(TreatmentDuration2 %in% plotme) %>%
+  mutate(Morphology = factor(Morphology,
+                                   levels = level_mapping)) %>%  # Reorder levels
+  ggplot(aes(x = fct_relevel(Treatment,
+                             "Scram", "Scram-PRMT5i",
+                             "p53-kd-1","p53-kd-1-PRMT5i",
+                             "p53-kd-2", "p53-kd-2-PRMT5i"
+                             ),
+                               y = proportion,
+             fill = Morphology)) +
+  geom_col(position = "stack") +  # Stacked bar plot
+  # scale_fill_manual(values = setNames(nuclei_summary$Color, nuclei_summary$CountCoilin_Group2)) +  # Custom fill colors for CountCoilin_Group2
+    scale_fill_grey(start = 0.9, end = 0.3) +  # Shades of gray from dark (0.3) to light (0.9)
+  theme_minimal() +
+  labs(
+    title = "Nuclear Morphology",
+    x = "Treatment",
+    y = "% Nuclei Count",
+    fill = "Nuclear\nMorphology"
+  ) +
+  # ylim(0, 50) +
+  scale_x_discrete(labels = label_mapping) +  # Change x-axis labels to DurationHr
+  theme_minimal(base_size = 24) +
+  theme(
+    axis.text.x = element_text(size = 24,
+                               # angle = 45, hjust = 1, vjust = 1,
+                               color = "black", face = "plain"),
+    axis.text.y = element_text(size = 24, color = "black", face = "plain"),
+    axis.title = element_text(size = 24, face = "plain"),
+    legend.position = "right",  # Show legend for puncta group
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),  
+    panel.border = element_blank(),      
+    axis.line = element_line(color = "black", size = 1.2),  
+    legend.text = element_text(size = 24, color = "black", face = "plain"),  
+    legend.title = element_text(color = "black", face = "plain"),  
+    plot.title = element_text(size = 24, color = "black", face = "plain"),  
+    plot.subtitle = element_text(color = "black", face = "plain"),  
+    text = element_text(color = "black", face = "plain")  
+  )
+
+# Display the plot
+plot
+
+# Save the plot as a PNG
+ggsave(filename = output_file, plot = plot, width = 8, height = 6, dpi = 300)
+
+```
+
+
+
+
+
