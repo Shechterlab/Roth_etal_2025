@@ -1,0 +1,270 @@
+---
+title: "Untitled"
+author: "Jacob Roth"
+date: "2025-06-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Install if needed
+# install.packages("BiocManager")
+# BiocManager::install("karyoploteR")
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("karyoploteR")
+library(karyoploteR)
+
+# Define which chromosomes to plot
+chromosomes_to_plot <- c("chr1", "chr6")
+
+# Create the plot
+kp <- plotKaryotype(genome = "hg38", chromosomes = chromosomes_to_plot)
+
+# Add cytobands (Giemsa staining)
+kpAddCytobands(kp)
+
+# Optional: Add base number ticks
+kpAddBaseNumbers(kp)
+
+```
+# Down
+```{r}
+library(karyoploteR)
+library(GenomicRanges)
+
+# Histone genes on chromosome 1 (H2AC18, H2AC7)
+histone_chr1 <- GRanges(
+  seqnames = c("chr1", "chr1"),
+  ranges = IRanges(
+    start = c(150911049, 150912278),
+    end   = c(150911423, 150912647)
+  ),
+  gene = c("H2AC18", "H2AC7")
+)
+
+# Plot chromosome 1
+kp1 <- plotKaryotype(genome = "hg38", chromosomes = "chr1")
+kpAddBaseNumbers(kp1)
+kpPlotMarkers(kp1, data = histone_chr1, labels = histone_chr1$gene,
+              text.orientation = "vertical", label.margin = 0.01)
+
+
+
+
+```
+```{r}
+# Histone genes on chromosome 6 (H2BC13, H1-5, H2BC5, H2AC21, H1-3)
+histone_chr6 <- GRanges(
+  seqnames = rep("chr6", 5),
+  ranges = IRanges(
+    start = c(26225059, 26232513, 26233990, 26249849, 26226697),
+    end   = c(26225413, 26232800, 26234249, 26250196, 26227025)
+  ),
+  gene = c("H2BC13", "H1-5", "H2BC5", "H2AC21", "H1-3")
+)
+
+# Plot chromosome 6
+kp6 <- plotKaryotype(genome = "hg38", chromosomes = "chr6",
+                     plot.type = 1, 
+              # ideogram.height = 10, 
+              # margins = c(0.7, 0.02), 
+              cytobands = NULL,
+              labels.plotter = NULL
+              # main = "NULL" # title
+              )
+kpAddBaseNumbers(kp6, tick.dist = 25e6, tick.len = 10, 
+                 cex = 1, minor.tick.dist = 5e6, 
+                 add.units = FALSE)
+kpPlotMarkers(kp6, data = histone_chr6, labels = histone_chr6$gene,
+              text.orientation = "vertical",
+              label.margin = 10,
+                r0 = 0, r1 = 0.1  # Adjust these as needed to bring labels closer
+)
+
+```
+```{r Pro-Seq}
+
+# Install if needed
+# install.packages("BiocManager")
+# BiocManager::install("biomaRt")
+
+library(biomaRt)
+
+# Connect to Ensembl
+mart <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+
+# Define your gene list
+histones <- c("H1-0", "H1-2", "H1-3", "H1-4", "H1-5", 
+              "H2AC11", "H2AC12", "H2AC20", "H2AC6", "H2AC9P", "H2AJ", 
+              "H2BC13", "H2BC15", "H2BC19P", "H2BC20P", "H2BC21", "H2BC4", "H2BC5", 
+              "H3-3B", "H3-5", "H3C1", "H3C11", "H3C13", "H3C14", "H3C15", "H4C16")
+
+# Get coordinates
+histone_coords <- getBM(attributes = c("external_gene_name", "chromosome_name", "start_position", "end_position"),
+                        filters = "external_gene_name",
+                        values = histones,
+                        mart = mart)
+
+# View
+print(histone_coords)
+
+```
+
+
+```{r}
+library(GenomicRanges)
+
+# Filter out non-standard chromosomes (optional, keeps only chr1–22, X, Y)
+histone_coords <- histone_coords[histone_coords$chromosome_name %in% c(1:22, "X", "Y"), ]
+
+# Convert to GRanges
+histone_genes_proseq <- GRanges(
+  seqnames = paste0("chr", histone_coords$chromosome_name),
+  ranges = IRanges(start = histone_coords$start_position,
+                   end = histone_coords$end_position),
+  gene = histone_coords$external_gene_name
+)
+
+# Sort if needed
+histone_genes_proseq <- sort(histone_genes_proseq)
+
+# View GRanges object
+histone_genes_proseq
+
+```
+
+```{r}
+
+library(karyoploteR)
+library(GenomicRanges)
+
+# Helper function to plot and save karyotype
+plot_histone_chr <- function(chr, file_name) {
+  chr_indices <- which(as.character(seqnames(histone_genes_proseq)) == chr)
+
+  png(filename = file_name, width = 1000, height = 300, res = 150)
+  kpro <- plotKaryotype(genome = "hg38", chromosomes = chr,
+                       plot.type = 1)
+
+  kpAddBaseNumbers(kpro, tick.dist = 50e6, tick.len = 20, 
+                 cex = 1, minor.tick.dist = 10e6, 
+                 add.units = TRUE)
+  kpPlotMarkers(kpro,
+                data = histone_genes[chr_indices],
+                labels = histone_genes$gene[chr_indices],
+                text.orientation = "vertical",
+                label.margin = 10,
+                r0 = 0, r1 = 0.1  # Adjust these as needed to bring labels closer
+                )
+  dev.off()
+}
+
+# Save plots for each chromosome
+plot_histone_chr("chr1", "ProSeq/HistoneGenes-ProSeq-3hrDown_chr1.png")
+plot_histone_chr("chr6", "ProSeq/HistoneGenes-ProSeq-3hrDown_chr6.png")
+plot_histone_chr("chr12", "ProSeq/HistoneGenes-ProSeq-3hrDown_chr12.png")
+plot_histone_chr("chr22", "ProSeq/HistoneGenes-ProSeq-3hrDown_chr22.png")
+
+
+```
+
+
+
+
+```{r SILAC down in GSK}
+library(karyoploteR)
+library(GenomicRanges)
+
+# Define the histone genes with their coordinates and gene names
+# histone_genes_down <- GRanges(
+#   seqnames = c("chr6", "chr6","chr6","chr6","chr6","chr1","chr1"),
+#   ranges = IRanges(
+#     start = c(26225059, 26232513, 26233990, 26249849, 26226697,150911049, 150912278),
+#     end   = c(26225413, 26232800, 26234249, 26250196, 26227025,150911423, 150912647)
+#   ),
+#   gene = c("H2BC13", "H1-5", "H2BC5", "H2AC21", "H1-3","H2AC18", "H2AC7")
+# )
+
+# Define the histone gene coordinates
+histone_genes_down <- GRanges(
+  seqnames = c("chr1", "chr1", "chr6", "chr6", "chr6", "chr6", "chr6"),
+  ranges = IRanges(
+    start = c(150911049, 150912278, 26225059, 26232513, 26233990, 26249849, 26226697),
+    end   = c(150911423, 150912647, 26225413, 26232800, 26234249, 26250196, 26227025)
+  ),
+  gene = c("H2AC18", "H2AC7", "H2BC13", "H1-5", "H2BC5", "H2AC21", "H1-3")
+)
+
+
+
+# Helper function to plot and save karyotype
+plot_histone_chr <- function(chr, file_name) {
+  chr_indices <- which(as.character(seqnames(histone_genes_down)) == chr)
+
+  png(filename = file_name, width = 1000, height = 300, res = 150)
+  kp <- plotKaryotype(genome = "hg38", chromosomes = chr)
+  kpAddBaseNumbers(kp)
+  kpPlotMarkers(kp,
+                data = histone_genes[chr_indices],
+                labels = histone_genes$gene[chr_indices],
+                text.orientation = "vertical",
+                label.margin = 0.01)
+  dev.off()
+}
+
+# Save plots for each chromosome
+plot_histone_chr("chr1", "HistoneGenes-DownInGSK_chr1.png")
+plot_histone_chr("chr6", "HistoneGenes-DownInGSK_chr6.png")
+# plot_histone_chr("chr22", "HistoneGenes-DownInGSK_chr22.png")
+
+
+```
+# Up
+
+```{r SILAC up in GSK}
+library(karyoploteR)
+library(GenomicRanges)
+
+# Define the histone genes with their coordinates and gene names
+histone_genes <- GRanges(
+  seqnames = c("chr1", "chr1", "chr1", "chr1", "chr6", "chr6", "chr6", "chr22"),
+  ranges = IRanges(
+    start = c(149897000, 149898000, 150007000, 150032000,
+              26120000, 26200000, 26300000, 42200000),
+    end =   c(149898000, 149899000, 150008000, 150033000,
+              26130000, 26210000, 26310000, 42210000)
+  ),
+  gene = c("H1-2", "H1-4", "H3C1", "H2BC20P",
+           "H1-10", "H3C15", "H3-4", "H1-0")
+)
+
+# Helper function to plot and save karyotype
+plot_histone_chr <- function(chr, file_name) {
+  chr_indices <- which(as.character(seqnames(histone_genes)) == chr)
+
+  png(filename = file_name, width = 1000, height = 300, res = 150)
+  kp <- plotKaryotype(genome = "hg38", chromosomes = chr)
+  kpAddBaseNumbers(kp)
+  kpPlotMarkers(kp,
+                data = histone_genes[chr_indices],
+                labels = histone_genes$gene[chr_indices],
+                text.orientation = "vertical",
+                label.margin = 0.01)
+  dev.off()
+}
+
+# Save plots for each chromosome
+plot_histone_chr("chr1", "HistoneGenes-UpInGSK_chr1.png")
+plot_histone_chr("chr6", "HistoneGenes-UpInGSK_chr6.png")
+plot_histone_chr("chr22", "HistoneGenes-UpInGSK_chr22.png")
+
+
+```
+
+
+
