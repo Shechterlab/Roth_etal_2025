@@ -1,0 +1,387 @@
+---
+title: "SILAC H/L Ratios for Histone PTMs"
+author: "David Shechter"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+---
+
+This R Markdown document analyzes SILAC-labeled histone post-translational modifications (PTMs) in response to PRMT5 inhibition using GSK591. Quantitative peptide intensity data were obtained for histone H3 and H4 from nascent proteome experiments and processed to compute three key metrics:
+
+1. **Fraction Heavy (H / (H + L))** – reflecting newly synthesized peptide incorporation,
+2. **PTM Occupancy** – relative abundance of each PTM site within a peptide,
+3. **Normalized Peptide Abundance** – median-centered abundance across replicates.
+
+Data are imported from Excel files, reshaped to long format, and parsed by treatment condition and timepoint. The script generates:
+
+- Summary statistics per PTM and condition
+- QC plots for each metric
+- Heatmaps of fraction heavy values per peptide
+- Stacked barplots separating old vs. new histone PTMs
+
+Exported outputs include per-peptide and summary-level data tables (in `.xlsx` and `.csv`), and all plots (in `.pdf`) are saved to the output directory.
+
+This workflow enables visualization and interpretation of histone PTM dynamics under control (DMSO) and PRMT5-inhibited conditions at 9 hr and 24 hr timepoints.
+
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(readxl)
+library(writexl)
+library(pheatmap)   # for heatmaps
+library(stringr)
+library(glue)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(circlize)
+library(RColorBrewer)
+```
+
+```{r load and prepare data}
+# Load Excel sheets
+path <- "M:/Github_local/Roth_etal_2025/Figure 6/SILAC/SILAC_HistonePTM_May2025.xlsx"
+
+outdir <- "M:/Github_local/Roth_etal_2025/Figure 6/SILAC/"
+
+dir.create(paste0(outdir,"plots"), showWarnings = FALSE)
+dir.create(paste0(outdir, "csv"), showWarnings = FALSE)
+
+
+
+df_H3 <- read_excel(path, sheet="simplified_H3") %>% mutate(Histone = "H3")
+df_H4 <- read_excel(path, sheet="simplified_H4") %>% mutate(Histone = "H4")
+int_df <- bind_rows(df_H3, df_H4)
+
+df_H3_abund <- read_excel(path, sheet="Abundance_H3") %>% mutate(Histone = "H3")
+df_H4_abund <- read_excel(path, sheet="Abundance_H4") %>% mutate(Histone = "H4")
+abund_df <- bind_rows(df_H3_abund, df_H4_abund)
+
+intensity_cols <- names(int_df)[str_detect(names(int_df), '^[0-9]+_[DG]-[0-9]{1,2}hr_rep\\d+$')]
+abund_cols     <- names(abund_df)[str_detect(names(abund_df), '^[0-9]+_[DG]-[0-9]{1,2}hr_rep\\d+$')]
+
+# Pivot to long format and parse sample info
+int_long <- int_df %>%
+  pivot_longer(all_of(intensity_cols), names_to="sample", values_to="Intensity") %>%
+  mutate(sample = str_remove(sample, '^[0-9]+_')) %>%
+  separate(sample, into=c("Treatment","Time","Rep"), sep="[-_]", remove=FALSE) %>%
+  mutate(
+    Treatment = recode(Treatment, D="DMSO", G="GSK591"),
+    Time      = str_replace(Time, "hr", " hr"),
+    Rep       = parse_number(Rep)
+  )
+
+abundance_long <- abund_df %>%
+  pivot_longer(all_of(abund_cols), names_to="sample", values_to="Abundance") %>%
+  mutate(sample = str_remove(sample, '^[0-9]+_')) %>%
+  separate(sample, into=c("Treatment","Time","Rep"), sep="[-_]", remove=FALSE) %>%
+  mutate(
+    Treatment = recode(Treatment, D="DMSO", G="GSK591"),
+    Time      = str_replace(Time, "hr", " hr"),
+    Rep       = parse_number(Rep)
+  )
+
+
+```
+
+```{r compute-and-export-fraction, message=FALSE}
+
+# COMPUTE FRACTION HEAVY AND EXPORT
+# Compute Fraction Heavy
+int_sum <- int_long %>%
+  group_by(Peptide_sequence, PTM, Histone, Treatment, Time, Rep, Heavy_Light) %>%
+  summarize(total_int = sum(Intensity, na.rm=TRUE), .groups="drop")
+
+frac_df <- int_sum %>%
+  pivot_wider(
+    id_cols = c(Peptide_sequence, PTM, Histone, Treatment, Time, Rep),
+    names_from = Heavy_Light,
+    values_from = total_int,
+    values_fill = 0
+  ) %>%
+  mutate(fracHeavy = heavy / (heavy + light))
+
+summary_fracH <- frac_df %>%
+  group_by(Peptide_sequence, PTM, Histone, Treatment, Time) %>%
+  summarize(
+    mean_fracH = mean(fracHeavy, na.rm=TRUE),
+    sd_fracH   = sd(fracHeavy,   na.rm=TRUE),
+    .groups="drop"
+  ) %>%
+  mutate(RowID = glue("{Peptide_sequence} | {PTM}"))
+
+# Compute normalized occupancy per peptide
+abund_occ <- abundance_long %>%
+  group_by(Peptide_sequence, PTM, Histone, Treatment, Time, Rep) %>%
+  mutate(
+    total_pep = sum(Abundance, na.rm=TRUE),
+    occ = Abundance / total_pep
+  ) %>%
+  ungroup()
+
+summary_occ <- abund_occ %>%
+  group_by(Peptide_sequence, PTM, Histone, Treatment, Time) %>%
+  summarize(
+    mean_occ = mean(occ, na.rm=TRUE),
+    sd_occ   = sd(occ,   na.rm=TRUE),
+    .groups="drop"
+  ) %>%
+  mutate(RowID = glue("{Peptide_sequence} | {PTM}"))
+
+abundance_norm <- abundance_long %>%
+  group_by(Treatment, Time, Rep, Histone) %>%
+  mutate(
+    sample_median = median(Abundance, na.rm = TRUE),
+    norm_abund    = Abundance / sample_median
+  ) %>%
+  ungroup()
+
+# Abundance (raw)
+summary_abund <- abundance_norm %>%
+  group_by(Peptide_sequence, PTM, Histone, Treatment, Time) %>%
+  summarize(
+    mean_abund = mean(norm_abund, na.rm=TRUE),
+    sd_abund   = sd(norm_abund,   na.rm=TRUE),
+    .groups="drop"
+  ) %>%
+  mutate(RowID = glue("{Peptide_sequence} | {PTM}"))
+
+######### EXPORT
+
+write_xlsx(
+  list(
+    per_peptide = frac_df,
+    summary     = summary_fracH
+  ),
+  path = "HistonePTM_fracHeavy_PRMT5.xlsx"
+)
+
+write_xlsx(
+  list(
+    per_peptide = abund_occ,
+    summary     = summary_occ
+  ),
+  path = "HistonePTM_Occupancy_PRMT5.xlsx"
+)
+
+write_xlsx(
+  list(
+    per_peptide = abundance_long,
+    summary     = summary_abund
+  ),
+  path = "HistonePTM_Abundance_PRMT5.xlsx"
+)
+
+
+
+```
+
+```{r QC plots}
+
+make_simple_qc <- function(df_long, value, ylab) {
+  qc <- df_long %>%
+    group_by(Histone, Treatment, Time, Rep) %>%
+    summarize(val = mean({{value}}, na.rm=TRUE), .groups="drop") %>%
+    mutate(
+      Cond = factor(paste(Treatment, Time), levels = c("DMSO 9 hr", "DMSO 24 hr", "GSK591 9 hr", "GSK591 24 hr")),
+      Histone = factor(Histone, levels = c("H3","H4"))
+    )
+
+  ggplot(qc, aes(x=Cond, y=val, fill=Treatment)) +
+    stat_summary(fun=mean, geom="col", color="black", width=0.6) +
+    stat_summary(fun.data=mean_se, geom="errorbar", width=0.2) +
+    scale_fill_manual(values=c(DMSO="#CCCCCC", GSK591="forestgreen")) +
+    facet_wrap(~Histone, scales="free_y") +
+    labs(x=NULL, y=ylab) +
+    theme_minimal(base_size=12) +
+    theme(axis.text.x = element_text(angle=45, hjust=1), legend.position="none")
+}
+
+print(make_simple_qc(frac_df, fracHeavy, "Fraction heavy"))
+print(make_simple_qc(abundance_long, Abundance, "Peptide abundance"))
+print(make_simple_qc(abund_occ, occ, "Occupancy"))
+
+ 
+    pdf(paste0(outdir, "/plots/", "QC_fraction_heavy_H3H4.pdf"), width = 4, height = 5)
+
+    print(make_simple_qc(frac_df, fracHeavy, "Fraction heavy"))
+    
+    dev.off()
+
+
+```
+
+```{r peptide heatmaps}
+
+# Compute summary of fraction heavy
+frac_summary <- frac_df %>%
+  group_by(Peptide_sequence, PTM, Histone, Treatment, Time) %>%
+  dplyr::summarize(
+    mean_fracH = mean(fracHeavy, na.rm = TRUE),
+    sd_fracH   = sd(fracHeavy,   na.rm = TRUE),
+    .groups    = "drop"
+  ) %>%
+  dplyr::mutate(RowID = glue("{Peptide_sequence} | {PTM}"))
+
+# Heatmap function focused on Fraction Heavy
+plot_fraction_heavy_heatmaps <- function(summary_df) {
+  peptides <- unique(summary_df$Peptide_sequence)
+  heat_colors <- colorRampPalette(rev(RColorBrewer::brewer.pal(8, "RdYlBu")))(50)
+
+  for (pep in peptides) {
+    df_sub <- summary_df %>% filter(Peptide_sequence == pep)
+
+    if (nrow(df_sub) == 0) {
+      message(glue("No data for peptide: {pep}"))
+      next
+    }
+
+    ptm_order <- df_sub %>%
+      dplyr::distinct(PTM) %>%
+      dplyr::mutate(
+        pos = if_else(str_to_lower(PTM) == "unmod", 0L,
+                      as.integer(str_extract(PTM, "(?<=K)\\d+"))),
+        n_sites = str_count(PTM, "K\\d+")
+      ) %>%
+      dplyr::arrange(pos, n_sites) %>%
+      dplyr::pull(PTM)
+
+    mat <- df_sub %>%
+      dplyr::mutate(RowID = PTM, Cond = paste(Treatment, Time)) %>%
+      dplyr::select(RowID, Cond, mean_fracH) %>%
+      pivot_wider(names_from = Cond, values_from = mean_fracH) %>%
+      column_to_rownames("RowID") %>%
+      as.matrix()
+
+    col_order <- c("DMSO 9 hr", "GSK591 9 hr","DMSO 24 hr", "GSK591 24 hr")
+    mat <- mat[ptm_order, col_order[col_order %in% colnames(mat)], drop = FALSE]
+
+    if (nrow(mat) == 0 || ncol(mat) == 0) next
+
+    heatmap_plot <- pheatmap(
+      mat,
+      cluster_rows = FALSE,
+      cluster_cols = FALSE,
+      color = heat_colors,
+      main = glue("{pep}: Fraction heavy"),
+      na_col = "grey90",
+      fontsize_row = 8,
+      fontsize_col = 10,
+      border_color = NA,
+      gaps_col = 2
+    )
+    print(heatmap_plot)
+    
+    #can't use ggsave for pheatmap
+    
+    pdf(paste0(outdir, "/plots/", pep, "_fraction_heavy_heatmap.pdf"), width = 4, height = 5)
+
+    print(heatmap_plot)
+    dev.off()
+    
+}
+}
+
+# Run the function
+plot_fraction_heavy_heatmaps(frac_summary)
+
+# write csv file
+  write_csv(frac_summary, file = file.path(paste0(outdir,"/csv"), "FractionHeavy_Heatmap.csv"))
+
+```
+
+
+```{r stacked bar chart old new PTMs}
+
+#Function to create a stack bar chart of Old (light) and New (Heavy) histone PTMs
+
+# Normalize within each Peptide + Rep + Channel group
+ptm_frac <- int_long %>%
+  filter(!is.na(Intensity)) %>%
+  group_by(Peptide_sequence, PTM, Heavy_Light, Treatment, Time, Rep) %>%
+  summarize(ptm_int = sum(Intensity, na.rm=TRUE), .groups = "drop") %>%
+  group_by(Peptide_sequence, Heavy_Light, Treatment, Time, Rep) %>%
+  mutate(
+    total_int  = sum(ptm_int),
+    frac_pct   = 100 * ptm_int / total_int
+  ) %>%
+  ungroup()
+
+# summarize across replicates
+ptm_frac_summary <- ptm_frac %>%
+  group_by(Peptide_sequence, PTM, Heavy_Light, Treatment, Time) %>%
+  summarize(
+    mean_pct = mean(frac_pct, na.rm=TRUE),
+    sd_pct   = sd(frac_pct, na.rm=TRUE),
+    .groups = "drop"
+  )
+
+####### plotting function
+
+plot_stacked_peptide <- function(peptide_name) {
+  df_plot <- ptm_frac_summary %>%
+    dplyr::filter(Peptide_sequence == peptide_name)
+
+  if (nrow(df_plot) == 0) {
+    message(glue::glue("No data for peptide: {peptide_name}"))
+    return(NULL)
+  }
+
+  df_plot <- df_plot %>%
+    dplyr::mutate(
+      Age = ifelse(tolower(Heavy_Light) == "light", "Old", "New"),
+      Cond_Age = paste(Treatment, Time, Age),
+      Cond_Age = factor(
+        Cond_Age,
+        levels = c(
+          "DMSO 9 hr Old",  "GSK591 9 hr Old",
+          "DMSO 9 hr New",  "GSK591 9 hr New",
+          "DMSO 24 hr Old", "GSK591 24 hr Old",
+          "DMSO 24 hr New", "GSK591 24 hr New"
+        )
+      )
+    )
+
+  # Generate dynamic grayscale palette based on number of PTMs
+  ptm_colors <- colorRampPalette(c( "gray85", "gray70", "gray40","black"))(length(unique(df_plot$PTM)))
+
+  stacked_plot <- ggplot(df_plot, aes(x = Cond_Age, y = mean_pct, fill = PTM)) +
+    geom_bar(stat = "identity", width = 0.6) +
+    #geom_errorbar(
+    #  aes(ymin = mean_pct - sd_pct, ymax = mean_pct + sd_pct),
+    #  width = 0.2,
+    #  position = "stack"
+    #) +
+    scale_fill_manual(values = ptm_colors) +
+    labs(
+      title = glue::glue("Peptide {peptide_name}"),
+      y = "% of total peptide",
+      x = NULL
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.title = element_blank()
+    )
+
+  print(stacked_plot)
+  
+  ggsave(
+    filename = glue::glue("plots/{pep}_stacked_barplot.pdf"),
+    plot = stacked_plot,
+    width = 6, height = 5, dpi = 300
+  )
+  
+ }
+
+#Cycle through all peptides to plot them
+
+for (pep in unique(ptm_frac_summary$Peptide_sequence)) {
+  plot_stacked_peptide(pep)
+}
+
+ # output raw data
+  write_csv(ptm_frac_summary, file = file.path(paste0(outdir,"csv"), "StackedBar_PTM_OldNew.csv"))
+
+```
