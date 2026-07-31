@@ -24,7 +24,3 @@ Each figure is supplied as PDF and high-resolution PNG; SVG is also included whe
 ## Scripts
 
 The scripts in `scripts/` are copied unchanged from the analysis workspace. Source bigWigs are not included because of their size. The committed figure and data files allow the displayed results to be inspected without those source tracks.
-
-## Exclusions
-
-Pol II S5ph data, Pol II S5ph figures and statistics, lower/non-expressed-gene exploratory panels, deepTools QC panels not used in the paper, caches, temporary plotting files, and legacy results are intentionally omitted.
