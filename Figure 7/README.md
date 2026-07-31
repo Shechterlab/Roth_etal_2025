@@ -1,6 +1,6 @@
 # PRMT5 H3/H4 CUT&Tag manuscript figures
 
-This folder is the curated GitHub upload for the genomic panels retained in the manuscript. It contains the final figure files, the numerical tables needed to inspect the plotted values, and unchanged copies of the scripts used to generate them.
+This contains the final figure files, the numerical tables needed to inspect the plotted values, and unchanged copies of the scripts used to generate them.
 
 ## Included panels
 
