@@ -1,0 +1,123 @@
+dir = "/Users/jacobroth/Library/CloudStorage/OneDrive-Personal/RothJacob_PhDFiles/3-Manuscripts/1-Drafts/2025_Roth_PRMT5-ActivityDrivesHistoneTranscriptionToPromoteCellularGrowth/Figures/IF/20260504_IF-ImageProcessing/H4-MutantOE/";
+
+date = "20260503"
+
+Batch = "20250609_Batch02"
+
+folder = "/NPATQuant"
+
+
+// Define list of slides to process
+slides = newArray(
+"JSRs190-02",
+"JSRs192-04",
+"JSRs192-06",
+"JSRs193-02",
+"JSRs193-03",
+"JSRs193-06",
+"JSRs194-02",
+"JSRs194-03"
+); // ← Add more as needed
+
+
+for (s = 0; s < slides.length; s++) {
+  slide = slides[s];
+  BatchSlide = "20250609_Batch02/" + slide + "/";
+  saveDir = dir + BatchSlide + folder;
+  File.makeDirectory(saveDir);
+
+CH1 = "Untitled_CH1";
+CH2 = "Untitled_CH2";
+CH3 = "Untitled_CH3";
+CH4 = "Untitled_CH4";
+
+run("Fresh Start"); // this removes all images and saved data
+// https://forum.image.sc/t/fresh-start-macro-command-in-imagej-fiji/43102/7
+// run("Fresh Start", "images results rois"); // to note remove images, results, or rois
+
+// Open the DAPI image
+open(dir + BatchSlide + CH1 + ".tif");
+rename(CH1);
+rename("DAPI");
+
+// Convert RGB to 16-bit
+run("16-bit");
+
+// Threshold the DAPI image
+setAutoThreshold("Otsu dark no-reset");
+run("Convert to Mask");
+run("Fill Holes");
+run("Watershed");
+
+// Analyze particles to get the ROIs of the nuclei and measure their size
+run("Set Measurements...", "area redirect=None decimal=3");
+run("Set Scale...", "distance=3.97 known=1 unit=um");
+run("Analyze Particles...", "size=5-500 circularity=0.00-1.00 exclude on-edges show=Outlines display exclude add");
+
+// Save the processed DAPI_Mask image (updated new)
+selectImage("DAPI");
+roiManager("Show All");
+roiManager("Draw");
+saveAs("Tiff", saveDir + "/Overlay_DAPI.tif");
+// Save the ROI Manager contents for future reference
+roiManager("Save", dir + BatchSlide + folder + "/rois_nuclei.zip");
+
+// Store the initial count of ROIs and nucleus sizes
+initialROICount = roiManager("count");
+nucleusSizes = newArray(initialROICount);
+for (j = 0; j < initialROICount; j++) {
+    nucleusSizes[j] = getResult("Area", j);
+}
+
+// Clear the results table after storing nucleus sizes
+run("Clear Results");
+
+// Open the NPAT image
+open(dir + BatchSlide + CH4 + ".tif");
+rename(CH4);
+
+// Convert RGB to 16-bit
+run("16-bit");
+// Threshold the NPAT image
+// RenyiEntropy, intermodes, max, minimum, shanbhag, yen, maxentropy looked good
+setAutoThreshold("RenyiEntropy dark no-reset"); // RenyiEntropy captured some of the diffuse areas but not all; Max Entropy seems to be better at diffuse; Intermodes is only puncta; minimum is too few puncta missing some
+run("Convert to Mask");
+run("Fill Holes");
+
+// Array to store NPAT counts
+NPATCounts = newArray(initialROICount);
+
+// For each initial ROI, select it and analyze the NPAT puncta within
+for (k = 0; k < initialROICount; k++) {
+    roiManager("Select", k);
+    // Count the number of NPAT puncta within the ROI
+    run("Set Scale...", "distance=3.97 known=1 unit=um");
+    run("Analyze Particles...", "size=0.0005-Infinity circularity=0.00-1.00 show=Nothing clear");
+    // Store the count of NPAT puncta
+    NPATCounts[k] = nResults;
+}
+
+
+// Populate the Results table with the data
+for (l = 0; l < initialROICount; l++) {
+    setResult("Nucleus", l, l + 1);
+    setResult("Nucleus Size", l, nucleusSizes[l]);
+    setResult("NPAT Count", l, NPATCounts[l]);
+    updateResults();
+}
+
+// Save the Results table
+saveAs("Results", saveDir + "/NucleusNPATCounts_" + date + ".csv");
+
+
+// Save the processed DAPI_Mask image (updated new)
+
+// roiManager("Show All");
+// roiManager("Draw");
+
+saveAs("Tiff", saveDir + "/Overlay_NPAT.tif");
+// Save the ROI Manager contents for future reference
+
+
+run("Fresh Start"); // this removes all images and saved data
+}

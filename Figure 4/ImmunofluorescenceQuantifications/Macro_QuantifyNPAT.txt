@@ -1,0 +1,126 @@
+// Previously this: Macro_QuantifyH4-WIthinNucleiAndNPAT-Foci_20250606-1500
+
+// This correctly identifies nuclei, saves a roi.zip, saves an image with the binary nuclei, and saves a csv with measurements
+
+date = "20260505"
+
+dir = "/Users/jacobroth/Library/CloudStorage/OneDrive-Personal/RothJacob_PhDFiles/3-Manuscripts/1-Drafts/2025_Roth_PRMT5-ActivityDrivesHistoneTranscriptionToPromoteCellularGrowth/Figures/IF/20260504_IF-ImageProcessing/PRMT5-inhibition/";
+
+batch = "20241224_Batch03"
+
+slidereps = newArray(
+"JSRs105-01",
+"JSRs105-04",
+"JSRs105-05",
+"JSRs105-06"
+);
+
+histone = "None"
+distance1um = "3.975"
+
+
+// Channel base names (unchanged)
+CH1 = "Untitled_CH1";
+CH2 = "Untitled_CH2";
+CH3 = "Untitled_CH3";
+CH4 = "Untitled_CH4";
+
+// =================== LOOP OVER SLIDEREPS ===================
+for (s = 0; s < slidereps.length; s++) {
+
+    sliderep = slidereps[s];
+    print("Processing slide: " + sliderep);
+
+    BatchSlide = batch + "/" + sliderep + "/";
+    destdir = "/" + date + "_Quantify" + histone + "-PerNucleusAndPerHLB/";
+
+    // Ensure directories for this slide exist
+    File.makeDirectory(dir + BatchSlide + destdir);
+    //File.makeDirectory(sharedir + batch + "/" + sliderep + "/");
+    //File.makeDirectory(sharedir + BatchSlide + destdir);
+
+    run("Fresh Start"); // Start clean for each slide
+
+    // -------- NUCLEI SEGMENTATION (DAPI, CH1) --------
+
+    // Open the DAPI image (Original)
+    open(dir + BatchSlide + CH1 + ".tif");
+    rename("DAPI");
+
+    // Duplicate the original image for segmentation
+    selectWindow("DAPI");
+    run("RGB Color");
+    run("16-bit");
+    run("Set Scale...", "distance=" + distance1um + " known=1 unit=um");
+    saveAs("Tiff", dir + BatchSlide + destdir + "CH1_" + sliderep + ".tif");
+
+    run("Duplicate...", "title=DAPI_Mask");
+
+    // Process the duplicated image to create a binary mask
+    selectWindow("DAPI_Mask");
+    run("16-bit");
+    run("Auto Threshold", "method=Otsu dark");
+    run("Convert to Mask");
+    run("Fill Holes");
+    run("Watershed");
+
+    // Analyze the binary mask image to extract nuclei ROIs
+    run("Set Scale...", "distance=" + distance1um + " known=1 unit=um");
+    run("Set Measurements...", "area mean min max centroid perimeter bounding fit shape integrated display redirect=DAPI_Mask decimal=3");
+    run("Analyze Particles...", "size=5-500 circularity=0.00-1.00 exclude on-edges show=Outlines display clear include add");
+
+    // Save the processed DAPI_Mask image
+    roiManager("Show All");
+    roiManager("Draw");
+    saveAs("Tiff", dir + BatchSlide + destdir + "Overlay_DAPI.tif");
+    // Save the ROI Manager contents for future reference
+    roiManager("Save", dir + BatchSlide + destdir + "rois_nuclei.zip");
+
+    // Save the results to a CSV file
+    saveAs("Results", dir + BatchSlide + destdir + "Quantification_Nuclei.csv");
+    //saveAs("Results", sharedir + BatchSlide + destdir + "Quantification_Nuclei.csv");
+    // close("Results");
+
+    run("Fresh Start"); // Clean up before NPAT block
+
+    // -------- NPAT PUNCTA (CH4) --------
+
+    // Open the NPAT image
+    open(dir + BatchSlide + CH4 + ".tif");
+    rename("NPAT");
+    run("Set Scale...", "distance=" + distance1um + " known=1 unit=um");
+
+    // Process NPAT image to identify puncta
+    selectWindow("NPAT");
+    run("Duplicate...", "title=NPAT_Mask");
+
+    selectWindow("NPAT_Mask");
+    run("RGB Color");
+    run("16-bit");
+    setAutoThreshold("RenyiEntropy dark no-reset"); // or Yen
+    run("Convert to Mask");
+    // run("Fill Holes");
+    run("Set Measurements...", "area mean min centroid perimeter bounding fit shape integrated display redirect=NPAT decimal=5");
+    run("Analyze Particles...", "size=0.0005-Infinity circularity=0.00-1.00 show=Outlines display clear include add");
+
+    // Save the processed NPAT_Mask image
+    roiManager("Show All");
+    roiManager("Draw");
+    saveAs("Tiff", dir + BatchSlide + destdir + "Overlay_NPAT.tif");
+    // Save the ROI Manager contents for future reference
+    roiManager("Save", dir + BatchSlide + destdir + "rois_puncta-NPAT.zip");
+
+    // Save the results to a CSV file
+    saveAs("Results", dir + BatchSlide + destdir + "Quantification_puncta-NPAT.csv");
+    //saveAs("Results", sharedir + BatchSlide + destdir + "Quantification_puncta-NPAT.csv");
+    close("Results");
+
+
+    run("Fresh Start"); // Clean up before next slide
+
+    print("Finished slide: " + sliderep);
+}
+
+// =================== END LOOP ===================
+
+print("Data analysis complete for " + slidereps.length + " slides.");

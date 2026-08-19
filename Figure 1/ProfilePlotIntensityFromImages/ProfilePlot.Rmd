@@ -1,0 +1,277 @@
+---
+title: "PlotProfile"
+author: "Jacob Roth"
+date: "2026-05-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(readr)
+library(stringr)
+library(ggplot2)
+library(dplyr)
+
+date2 <- ymd(today())
+date <- format(ymd(today()), "%Y%m%d")
+
+```
+
+```{r}
+# Directory where FIJI saved the PlotProfile CSV files
+# profile_dir <- "/Users/jacobroth/Downloads/JSRs085/Cropped-fromSavedROI/"
+profile_dir <- file.path(
+  "/Users/jacobroth/Library/CloudStorage/OneDrive-Personal/RothJacob_PhDFiles/3-Manuscripts/1-Drafts/2025_Roth_PRMT5-ActivityDrivesHistoneTranscriptionToPromoteCellularGrowth/NatureCommunications/Resubmission/Figures/Figure-6_RawImages/Immunofluorescence/JSRs115-01_A549_A549-NaTx_DAPI-H4-Actin-NPAT",
+  "PlotProfile"
+)
+
+Treatment = "NaTx"
+CH2 =  "H4"
+
+# Optional output directory for plots
+plot_dir <- file.path(profile_dir, "Figures")
+dir.create(plot_dir, showWarnings = FALSE, recursive = TRUE)
+```
+
+```{r}
+profile_files <- list.files(
+  path = profile_dir,
+  pattern = "^PlotProfile_slice.*\\.csv$",
+  full.names = TRUE
+)
+
+profile_files
+```
+
+```{r}
+plot_profiles <- profile_files %>%
+  purrr::map_dfr(function(file) {
+    
+    readr::read_csv(file, show_col_types = FALSE) %>%
+      dplyr::mutate(
+        File = basename(file),
+        SliceFromFile = stringr::str_extract(File, "slice\\d+"),
+        SliceFromFile = stringr::str_remove(SliceFromFile, "slice"),
+        SliceFromFile = as.integer(SliceFromFile)
+      )
+  })
+```
+
+```{r}
+plot_profiles <- plot_profiles %>%
+  dplyr::rename(
+    Distance_um = `Distance_µm`
+  )
+```
+
+```{r}
+plot_profiles <- plot_profiles %>%
+  dplyr::mutate(
+    Channel = dplyr::case_when(
+      Slice == 1 ~ "DAPI",
+      Slice == 2 ~ CH2,
+      Slice == 3 ~ "Actin",
+      Slice == 4 ~ "NPAT",
+      TRUE ~ paste0("Slice ", Slice)
+    ),
+    Channel = factor(Channel, levels = c("Actin","DAPI", "NPAT", CH2))
+  )
+```
+
+```{r}
+npat_range <- plot_profiles %>%
+  dplyr::filter(Channel == "NPAT") %>%
+  dplyr::summarise(
+    NPAT_min = min(Intensity, na.rm = TRUE),
+    NPAT_max = max(Intensity, na.rm = TRUE)
+  )
+
+plot_profiles_scaled <- plot_profiles %>%
+  dplyr::mutate(
+    Intensity_scaled_to_NPAT =
+      (Intensity - npat_range$NPAT_min) /
+      (npat_range$NPAT_max - npat_range$NPAT_min)
+  )
+```
+
+
+```{r}
+
+library(dplyr)
+plotme = c("DAPI", CH2, "NPAT")
+
+# channel_colors <- c(
+#   "DAPI" = "#0000FF",      # Blue
+#   CH2 = "#00FF00",  # Green
+#   "NPAT" = "#FF00FF"       # Magenta
+# )
+
+channel_colors <- c(
+  "DAPI" = "#0000FF",
+  "#00FF00",
+  "NPAT" = "#FF00FF"
+)
+
+names(channel_colors)[2] <- CH2
+
+# plot <- plot_profiles %>%
+  plot <- plot_profiles_scaled %>%
+  dplyr::filter(Channel %in% plotme) %>%
+  ggplot(aes(
+    x = Distance_um,
+    # y = Intensity / 255,
+    y = Intensity_scaled_to_NPAT * 100,
+    color = Channel
+  )) +
+  geom_line(linewidth = 1) +
+  scale_color_manual(values = channel_colors) +
+  labs(
+    x = "Distance along line (µm)",
+    y = "Intensity",
+    color = "Channel",
+    title = paste0(Treatment, "_", CH2)
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(
+      size = 24,
+      color = "black",
+      face = "plain"
+    ),
+    axis.text.y = element_text(
+      size = 24,
+      color = "black",
+      face = "plain"
+    ),
+    axis.title = element_text(
+      size = 24,
+      face = "plain"
+    ),
+    legend.position = "Right",
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    axis.line = element_line(
+      color = "black",
+      linewidth = 1.2
+    ),
+    legend.text = element_text(
+      color = "black",
+      face = "plain"
+    ),
+    legend.title = element_text(
+      color = "black",
+      face = "plain"
+    ),
+    plot.title = element_text(
+      size = 24,
+      color = "black",
+      face = "plain"
+    ),
+    plot.subtitle = element_text(
+      color = "black",
+      face = "plain"
+    ),
+    text = element_text(
+      color = "black",
+      face = "plain"
+    )
+  )
+  # ylim(0,100)
+
+# Print the plot
+plot
+
+# Define the filename
+output_file <- file.path(plot_dir, paste0("PlotProfile-NPATScale_", date, ".png"))
+# Save the plot as a PNG
+ggsave(filename = output_file, plot = plot, width = 6, height = 4, dpi = 300)
+
+
+# Define PDF output filename
+output_file_pdf <- file.path(plot_dir, paste0("PlotProfile-NPATScale_", date, ".pdf"))
+
+# Save the plot as a PDF
+ggsave(filename = output_file_pdf, plot = plot, width = 6, height = 4, useDingbats = FALSE)
+
+plot2 <- plot +
+  labs(
+    x = "Distance along line (µm)",
+    y = "Intensity",
+    color = "Channel",
+    title = paste0(Treatment, "_", CH2)
+  ) +
+  theme(
+    axis.text.x = element_blank(),
+    axis.text.y = element_text(
+      size = 24,
+      color = "black",
+      face = "plain"
+    ),
+    axis.title = element_blank(),
+    legend.position = "none",
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    axis.line = element_line(
+      color = "black",
+      linewidth = 1.2
+    ),
+    legend.text = element_text(
+      color = "black",
+      face = "plain"
+    ),
+    legend.title = element_text(
+      color = "black",
+      face = "plain"
+    ),
+    plot.title = element_text(
+      size = 24,
+      color = "black",
+      face = "plain"
+    ),
+    plot.subtitle = element_text(
+      color = "black",
+      face = "plain"
+    ),
+    text = element_text(
+      color = "black",
+      face = "plain"
+    )
+  )
+plot2
+
+# Define the filename
+output_file <- file.path(plot_dir, paste0("PlotProfile-NPATScale-Clean_", date, ".png"))
+# Save the plot as a PNG
+ggsave(filename = output_file, plot = plot2, width = 6, height = 4, dpi = 300)
+
+
+# Define PDF output filename
+output_file_pdf <- file.path(plot_dir, paste0("PlotProfile-NPATScale-Clean_", date, ".pdf"))
+
+# Save the plot as a PDF
+ggsave(filename = output_file_pdf, plot = plot2, width = 6, height = 4, useDingbats = FALSE)
+
+```
+
+
+```{r eval = FALSE}
+ggplot(plot_profiles, aes(x = Distance_um, y = Intensity)) +
+  geom_line(linewidth = 1) +
+  facet_wrap(~ Channel, scales = "free_y", ncol = 1) +
+  labs(
+    x = "Distance along line ROI (µm)",
+    y = "Intensity",
+    title = "Line Profiles by Channel"
+  ) +
+  theme_classic(base_size = 14)
+```
+
+
+
+

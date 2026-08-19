@@ -1,0 +1,39 @@
+// Specify the main directory containing the target subfolders
+run("Fresh Start"); // Clears all images and saved data for a fresh start
+mainDir = "/Users/jacobroth/Library/CloudStorage/OneDrive-Personal/RothJacob_PhDFiles/3-Manuscripts/1-Drafts/2025_Roth_PRMT5-ActivityDrivesHistoneTranscriptionToPromoteCellularGrowth/Figures/IF/20260504_IF-ImageProcessing/H3/";
+
+// List the subfolders of interest
+subfolders = newArray(
+"JSRs210-03_stack",
+"JSRs210-04_stack"
+//"JSRs186-01_stack"
+);
+
+for (i = 0; i < lengthOf(subfolders); i++) {
+    // Construct the path to the current subfolder
+    subDir = mainDir + subfolders[i] + "/";
+    fileList = getFileList(subDir);
+    
+    // Iterate through each file in the current subfolder
+    for (j = 0; j < lengthOf(fileList); j++) {
+        if (indexOf(fileList[j], "_CH1") >= 0) {
+            // Open the file
+            open(subDir + fileList[j]);
+            
+            // Convert the image to 32-bit
+            run("16-bit");
+            
+            // Rename the image window using the first 7 characters of the subfolder's name
+            newName = substring(subfolders[i], 0, 10);
+            rename(newName);
+            
+            // Optional: Here you could add additional processing or saving steps
+            
+            // Optionally, close the image to free up memory if you're done processing it
+            // close();
+        }
+    }
+}
+
+// After all images have been opened, converted, and processed, tile them
+run("Tile");

@@ -1,0 +1,253 @@
+run("Fresh Start");
+
+// Define input directory directly
+dir = "/Users/jacobroth/Downloads/JSRs085/";
+
+run("Fresh Start");
+
+Path = dir + "Leveled-3/Cropped-1/";
+
+// ROI location
+roiPath = Path + "SavedROI.zip";
+
+// Output directory
+croppedDir = dir + "PlotProfile/";
+File.makeDirectory(croppedDir);
+
+// --- Load and stack all TIFF images from dir ---
+fileList = getFileList(dir);
+matchingFiles = newArray();
+
+for (i = 0; i < fileList.length; i++) {
+
+    // Skip subdirectories
+    if (File.isDirectory(dir + fileList[i]))
+        continue;
+
+    // Load all .tif or .tiff files
+    if (
+        endsWith(fileList[i], ".tif") ||
+        endsWith(fileList[i], ".tiff") ||
+        endsWith(fileList[i], ".TIF") ||
+        endsWith(fileList[i], ".TIFF")
+    ) {
+        matchingFiles = Array.concat(matchingFiles, dir + fileList[i]);
+    }
+}
+
+if (matchingFiles.length == 0) {
+    print("No TIFF images found in " + dir);
+    exit();
+}
+
+// Open all matching TIFFs
+for (i = 0; i < matchingFiles.length; i++) {
+    open(matchingFiles[i]);
+}
+
+// Convert opened images to one stack
+run("Images to Stack", "use");
+stackTitle = getTitle();
+
+// --- Set scale ---
+run("Set Scale...", "distance=3.975 known=1 unit=µm global=false");
+
+// --- Load saved ROI ---
+if (!File.exists(roiPath)) {
+    print("Could not find ROI file: " + roiPath);
+    exit();
+}
+
+roiManager("Reset");
+roiManager("Open", roiPath);
+
+// Apply first ROI to stack
+selectImage(stackTitle);
+roiManager("Select", 0);
+
+waitForUser("ROI Loaded", "SavedROI.zip has been loaded.\n\nClick OK to crop all slices using this ROI.");
+
+// --- Crop stack using loaded ROI ---
+selectImage(stackTitle);
+roiManager("Select", 0);
+run("Crop");
+
+croppedStackTitle = getTitle();
+
+// Zoom in so the stack fills more of the screen
+run("In [+]");
+run("In [+]");
+run("In [+]");
+
+// Clear crop ROI
+run("Select None");
+roiManager("Reset");
+
+// --- Define your desired line length here ---
+desiredLength_um = 30;
+
+// Set image scale:
+// distance = number of pixels
+// known = known real-world distance
+// Therefore: 3.975 pixels = 1 µm
+run("Set Scale...", "distance=3.975 known=1 unit=µm global=false");
+
+// Get calibrated pixel size
+getPixelSize(unit, pixelWidth, pixelHeight);
+
+// Convert desired length in µm to pixels
+desiredLength_pixels = desiredLength_um / pixelWidth;
+
+// Initial center of the image
+getDimensions(width, height, channels, slices, frames);
+startX = width / 2;
+startY = height / 2;
+
+// Calculate endpoints for a horizontal line of desired calibrated length
+x1 = startX - (desiredLength_pixels / 2);
+x2 = startX + (desiredLength_pixels / 2);
+
+// Create the initial line selection
+makeLine(x1, startY, x2, startY);
+
+// Optional: print values to confirm
+print("Pixel width = " + pixelWidth + " " + unit + "/pixel");
+print("Desired line length = " + desiredLength_um + " " + unit);
+print("Line length in pixels = " + desiredLength_pixels);
+
+// Prompt the user to move the line
+setTool("line");
+waitForUser("Line Placement", 
+    "Drag the line into place by hovering cursor over middle or ends of line, waiting for the tiny grabby hand to appear.\n\n" +
+    "The line is fixed at " + desiredLength_um + " " + unit + " when first drawn.\n\n" +
+    "Tip: Hold Alt/option to keep the length fixed while rotating, or Shift to lock to horizontal/vertical.\n\n" +
+    "Click OK when finished."
+);
+
+// Add the final positioned line to the ROI Manager
+roiManager("Add");
+
+// Save the final line ROI
+roiManager("Save", croppedDir + "LineROI_" + desiredLength_um + "um.zip");
+
+// ------------------------------------------------------------
+// Plot Profile export for regular stack: channels = 1, slices = 4
+// ------------------------------------------------------------
+
+selectImage(croppedStackTitle);
+
+// Make sure the line ROI is active once
+roiManager("Select", 0);
+
+// Capture the final line coordinates once
+getSelectionCoordinates(xpoints, ypoints);
+
+if (xpoints.length < 2) {
+    print("ERROR: The selected ROI does not appear to be a line.");
+    exit();
+}
+
+lineX1 = xpoints[0];
+lineY1 = ypoints[0];
+lineX2 = xpoints[xpoints.length - 1];
+lineY2 = ypoints[ypoints.length - 1];
+
+// Get cropped stack dimensions
+getDimensions(width, height, channels, slices, frames);
+
+// Reconfirm pixel calibration
+getPixelSize(unit, pixelWidth, pixelHeight);
+
+print("----- Profile extraction mode -----");
+print("Using regular stack mode");
+print("channels = " + channels);
+print("slices = " + slices);
+print("frames = " + frames);
+print("-----------------------------------");
+
+// Optional safety check
+if (!(channels == 1 && slices > 1)) {
+    print("ERROR: Expected channels = 1 and slices > 1, but got:");
+    print("channels = " + channels);
+    print("slices = " + slices);
+    exit();
+}
+
+for (s = 1; s <= slices; s++) {
+
+    selectImage(croppedStackTitle);
+    setSlice(s);
+
+    // Duplicate this slice as a standalone image
+    run("Duplicate...", "title=Profile_temp_slice" + s);
+
+    tempTitle = getTitle();
+
+    // Apply the exact same line ROI to this standalone slice
+    makeLine(lineX1, lineY1, lineX2, lineY2);
+
+    // Get profile from this duplicated slice
+    profile = getProfile();
+
+    // Create CSV text
+    csv = "Slice,Distance_" + unit + ",Intensity\n";
+
+    for (p = 0; p < profile.length; p++) {
+        distance = p * pixelWidth;
+        csv = csv + s + "," + distance + "," + profile[p] + "\n";
+    }
+
+    // Zero-padded slice label
+    sliceLabel = "" + s;
+    if (s < 10)
+        sliceLabel = "0" + s;
+
+    // Save profile CSV
+    savePath = croppedDir + "PlotProfile_slice" + sliceLabel + "_" + desiredLength_um + "um.csv";
+    File.saveString(csv, savePath);
+
+    print("Saved plot profile for slice " + s + " to: " + savePath);
+
+    // Close temporary duplicated slice
+    close();
+}
+
+selectImage(croppedStackTitle);
+
+print("Finished exporting plot profiles from regular 4-slice stack.");
+
+// ------------------------------------------------------------
+// Add profile ROI to existing LUT merge image, flatten, and save
+// ------------------------------------------------------------
+
+mergePath = Path + "LUT/Merge_CH1-CH2-CH4.tif";
+
+if (!File.exists(mergePath)) {
+    print("Could not find merge image: " + mergePath);
+} else {
+
+    // Open the merge image
+    open(mergePath);
+    mergeTitle = getTitle();
+
+    // Make sure scale is consistent
+    run("Set Scale...", "distance=3.975 known=1 unit=µm global=false");
+
+    // Apply the saved profile line ROI
+    selectImage(mergeTitle);
+    roiManager("Select", 0);
+
+    // Optional: make the ROI easier to see before flattening
+    run("Properties...", "stroke=white width=3");
+
+	roiManager("Show None");
+	roiManager("Show All");
+
+    // Flatten ROI onto the image
+    run("Flatten");
+
+    // Save flattened image
+    saveAs("Tiff", croppedDir + "Merge_CH1-CH2-CH4_ProfileROI.tif");
+
+    print("Saved flattened merge with profile ROI to: " + croppedDir + "Merge_CH1-CH2-CH4_ProfileROI.tif");
+}

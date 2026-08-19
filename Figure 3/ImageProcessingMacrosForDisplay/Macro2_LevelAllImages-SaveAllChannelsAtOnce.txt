@@ -1,0 +1,170 @@
+
+// Define base directory
+run("Fresh Start");
+run("Clear Results");
+
+dir = "/Users/jacobroth/Library/CloudStorage/OneDrive-Personal/RothJacob_PhDFiles/3-Manuscripts/1-Drafts/2025_Roth_PRMT5-ActivityDrivesHistoneTranscriptionToPromoteCellularGrowth/Figures/IF/20260504_IF-ImageProcessing/H3/";
+
+date = "20260508"
+
+// List the subfolders of interest
+
+slides = newArray(
+"JSRs210-03_stack",
+"JSRs210-04_stack"
+);
+
+multiple = "0"
+
+
+// Define CH1 image path suffix
+CH1 = "FF_JSRs210_CH1.tif";
+CH2 = "FF_JSRs210_CH2.tif";
+CH3 = "FF_JSRs210_CH3.tif";
+CH4 = "FF_JSRs210_CH4.tif";
+
+
+run("Fresh Start"); // Removes all images and saved data
+
+// Define brightness adjustment values (set these as needed)
+
+// CH1
+Channel = CH1
+Min = 0;  // Set the minimum brightness 0 best
+Max = 7442; // Set the maximum brightness 3600 best and 3200
+
+// Loop through slides, process CH1 images
+for (i = 0; i < lengthOf(slides); i++) {
+    imagePath = dir + slides[i] + "/" + Channel;
+    open(imagePath);
+    rename(slides[i]); // Rename for clarity
+
+    // Convert to 16-bit and adjust brightness
+    run("16-bit");
+    setMinAndMax(Min, Max);
+
+    // Convert back to RGB for final image so I can save it
+    run("RGB Color");
+
+    // Define the Leveled folder path
+    leveledFolder = dir + slides[i] + "/Leveled-" + multiple;
+
+    // Check if the "Leveled" folder exists, if not, create it
+    if (!File.exists(leveledFolder)) {
+        File.makeDirectory(leveledFolder);
+    }
+
+    // Construct the new filename
+    saveFilename = "Leveled-" + multiple + "/Leveled-" + date + "_CH1-DAPI_Bright-" + Min + "-" + Max + "_" + slides[i] + ".tif";
+    savePath = dir + slides[i] + "/" + saveFilename;
+
+    // Save the processed image
+    saveAs("Tiff", savePath);
+}
+
+
+// CH2
+Channel = CH2
+Min = 750;  // Set the minimum brightness 5000 best
+Max = 15000; // Set the maximum brightness 15000 best
+
+// Loop through slides, process CH2 images
+for (i = 0; i < lengthOf(slides); i++) {
+    imagePath = dir + slides[i] + "/" + Channel;
+    open(imagePath);
+    rename(slides[i]); // Rename for clarity
+
+    // Convert to 16-bit and adjust brightness
+    run("16-bit");
+    setMinAndMax(Min, Max);
+
+    // Convert back to RGB for final image so I can save it
+    run("RGB Color");
+
+    // Define the Leveled folder path
+    leveledFolder = dir + slides[i] + "/Leveled-" + multiple;
+
+    // Check if the "Leveled" folder exists, if not, create it
+    if (!File.exists(leveledFolder)) {
+        File.makeDirectory(leveledFolder);
+    }
+
+    // Construct the new filename
+    saveFilename = "Leveled-" + multiple + "/Leveled-" + date + "_CH2-H4R3me2s_Bright-" + Min + "-" + Max + "_" + slides[i] + ".tif";
+    savePath = dir + slides[i] + "/" + saveFilename;
+
+    // Save the processed image
+    saveAs("Tiff", savePath);
+}
+
+
+// CH3
+Channel = CH3
+Min = 0;  // Set the minimum brightness; 500 best
+Max = 15000; // Set the maximum brightness; 10000 best
+
+// Loop through slides, process CH3 images
+for (i = 0; i < lengthOf(slides); i++) {
+    imagePath = dir + slides[i] + "/" + Channel;
+    open(imagePath);
+    rename(slides[i]); // Rename for clarity
+
+    // Convert to 16-bit and adjust brightness
+    run("16-bit");
+    setMinAndMax(Min, Max);
+
+    // Convert back to RGB for final image so I can save it
+    run("RGB Color");
+
+    // Define the Leveled folder path
+    leveledFolder = dir + slides[i] + "/Leveled-" + multiple;
+
+    // Check if the "Leveled" folder exists, if not, create it
+    if (!File.exists(leveledFolder)) {
+        File.makeDirectory(leveledFolder);
+    }
+
+    // Construct the new filename
+      saveFilename = "Leveled-" + multiple + "/Leveled-" + date + "_CH3-Actin_Bright-" + Min + "-" + Max + "_" + slides[i] + ".tif";
+    savePath = dir + slides[i] + "/" + saveFilename;
+
+    // Save the processed image
+    saveAs("Tiff", savePath);
+}
+
+// CH4
+Channel = CH4
+Min = 4500;  // Set the minimum brightness 5000 best
+Max = 35000; // Set the maximum brightness 40000 best
+
+// Loop through slides, process CH4 images
+for (i = 0; i < lengthOf(slides); i++) {
+    imagePath = dir + slides[i] + "/" + Channel;
+    open(imagePath);
+    rename(slides[i]); // Rename for clarity
+
+    // Convert to 16-bit and adjust brightness
+    run("16-bit");
+    setMinAndMax(Min, Max);
+
+    // Convert back to RGB for final image so I can save it
+    run("RGB Color");
+
+    // Define the Leveled folder path
+    leveledFolder = dir + slides[i] + "/Leveled-" + multiple;
+
+    // Check if the "Leveled" folder exists, if not, create it
+    if (!File.exists(leveledFolder)) {
+        File.makeDirectory(leveledFolder);
+    }
+
+    // Construct the new filename
+      saveFilename = "Leveled-" + multiple + "/Leveled-" + date + "_CH4-NPAT_Bright-" + Min + "-" + Max + "_" + slides[i] + ".tif";
+    savePath = dir + slides[i] + "/" + saveFilename;
+
+    // Save the processed image
+    saveAs("Tiff", savePath);
+}
+
+
+run("Fresh Start"); // Removes all images and saved data
