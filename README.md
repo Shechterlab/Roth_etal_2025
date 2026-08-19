@@ -130,6 +130,4 @@ Please cite the accepted article when the final Nature Communications citation a
 
 ## Contact and reuse
 
-For questions about the study or repository, contact the corresponding author, David Shechter, at `david.shechter@einsteinmed.edu`.
-
-No license file is currently included in this repository. Contact the authors regarding reuse beyond inspection and reproduction of the published analyses.
+For questions about the study or repository, contact the corresponding author, David Shechter, at `david.shechter @ einsteinmed.edu`.
